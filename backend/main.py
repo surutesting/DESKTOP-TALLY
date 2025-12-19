@@ -1,8 +1,10 @@
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Any, Dict, Optional
 import os
 from dotenv import load_dotenv
+import google.generativeai as genai
 
 # Load environment variables
 load_dotenv()
@@ -12,6 +14,7 @@ app = FastAPI(title="AutoTally Backend API")
 # CORS configuration - Allow your React app to access this API
 origins = [
     "http://localhost:3000",
+    "http://localhost:3001",
     "http://localhost:5173",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:3001",
@@ -31,8 +34,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Simple API key validation (you can enhance this later)
+# Simple API key validation
 VALID_API_KEYS = os.getenv("BACKEND_API_KEY", "").split(",")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 def validate_api_key(authorization: str = Header(None)):
     """Validate the user's backend API key"""
@@ -56,7 +60,8 @@ async def root():
     return {
         "status": "online",
         "service": "AutoTally Backend API",
-        "version": "1.0.0"
+        "version": "2.0.0",
+        "features": ["gemini-proxy"]
     }
 
 
@@ -82,35 +87,75 @@ async def validate_key(authorization: str = Header(None)):
         }
 
 
-@app.get("/ai/gemini-key")
-async def get_gemini_key(authorization: str = Header(None)):
+# Pydantic models for Gemini proxy
+class GeminiProxyRequest(BaseModel):
+    model: str
+    contents: Dict[str, Any]
+    config: Optional[Dict[str, Any]] = None
+
+
+@app.post("/ai/gemini-proxy")
+async def gemini_proxy(
+    request: GeminiProxyRequest,
+    authorization: str = Header(None)
+):
     """
-    Get Gemini API key for authenticated users
-    This endpoint returns the Gemini API key to the React frontend
+    Proxy endpoint for Gemini API calls.
+    All business logic stays in React - this just forwards the request securely.
     """
     # Validate user's API key
     validate_api_key(authorization)
     
-    # Get Gemini API key from environment
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    
-    if not gemini_key:
+    # Check if Gemini API key is configured
+    if not GEMINI_API_KEY:
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail="Gemini API key not configured on server"
         )
     
-    return {
-        "success": True,
-        "geminiApiKey": gemini_key,
-        "message": "API key retrieved successfully"
-    }
-
-
-class GeminiKeyResponse(BaseModel):
-    success: bool
-    geminiApiKey: str = None
-    message: str
+    try:
+        # Configure Gemini with server's API key
+        genai.configure(api_key=GEMINI_API_KEY)
+        
+        # Get the model
+        model = genai.GenerativeModel(request.model)
+        
+        # Generate content with the provided configuration
+        generation_config = request.config or {}
+        
+        response = model.generate_content(
+            contents=request.contents,
+            generation_config=generation_config
+        )
+        
+        # Return the response
+        return {
+            "success": True,
+            "text": response.text,
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": part.text} for part in candidate.content.parts],
+                        "role": candidate.content.role
+                    },
+                    "finish_reason": candidate.finish_reason,
+                    "safety_ratings": [
+                        {
+                            "category": rating.category,
+                            "probability": rating.probability
+                        }
+                        for rating in candidate.safety_ratings
+                    ]
+                }
+                for candidate in response.candidates
+            ]
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Gemini API error: {str(e)}"
+        )
 
 
 if __name__ == "__main__":
