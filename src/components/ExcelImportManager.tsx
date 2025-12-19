@@ -1,6 +1,5 @@
-
 import React, { useState, useRef, useEffect } from 'react';
-import { FileSpreadsheet, ArrowRight, Loader2, CheckCircle2, AlertTriangle, Merge, Database, ListPlus, RefreshCw, Play, Building2, UploadCloud, X, AlertCircle } from 'lucide-react';
+import { FileSpreadsheet, ArrowRight, Loader2, CheckCircle2, AlertTriangle, Merge, Database, ListPlus, RefreshCw, Play, Building2, UploadCloud, ChevronDown } from 'lucide-react';
 import { read, utils } from 'xlsx';
 import { ExcelVoucher, ProcessedFile } from '../types';
 import { generateBulkExcelXml, pushToTally, fetchExistingLedgers, analyzeLedgerRequirements, fetchOpenCompanies } from '../services/tallyService';
@@ -12,6 +11,7 @@ interface ExcelImportManagerProps {
     onUpdateFile?: (id: string, updates: Partial<ProcessedFile>) => void;
 }
 
+// Precision Helper
 const round = (num: number): number => {
     return Math.round((num + Number.EPSILON) * 100) / 100;
 };
@@ -34,19 +34,23 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
     const [allColumns, setAllColumns] = useState<string[]>([]);
 
     const [mapping, setMapping] = useState({
+        voucherType: '',
         date: '',
         invoiceNo: '',
         partyName: '',
         gstin: '',
-        voucherType: '',
-        taxableAmount: '',
+        amount: '',
         taxRate: '',
+        rate: '',
+        period: '',
+        reverseCharge: '',
+        invoiceValue: '',
+        taxableValue: '',
+        igst: '',
         cgst: '',
         sgst: '',
-        igst: '',
-        totalAmount: '',
-        narration: '',
-        ledgerName: ''
+        cess: '',
+        quantity: ''
     });
 
     const BATCH_SIZE = 100;
@@ -77,7 +81,6 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
         setConnectionError(false);
         try {
             const existing = await fetchExistingLedgers(selectedCompany);
-            // Sample analysis for UI feedback
             const sample = mappedData.slice(0, 500);
             const missing = analyzeLedgerRequirements(sample, existing);
             setMissingLedgers(missing);
@@ -116,17 +119,38 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
                         const header = (data[headerRowIndex] || []).map(String);
                         setAllColumns(header);
                         setRawData(data.slice(headerRowIndex + 1));
+
                         const guess = { ...mapping };
                         header.forEach(col => {
-                            const c = col.toLowerCase();
-                            if (c.includes('date')) guess.date = col;
-                            if (c.includes('inv') || c.includes('no')) guess.invoiceNo = col;
-                            if (c.includes('party') || c.includes('name') || c.includes('customer')) guess.partyName = col;
-                            if (c.includes('gst') && !c.includes('rate')) guess.gstin = col;
-                            if ((c.includes('amount') || c.includes('value') || c.includes('taxable')) && !c.includes('total')) guess.taxableAmount = col;
-                            if (c.includes('rate') || c.includes('%')) guess.taxRate = col;
-                            if (c.includes('type') || c.includes('vch')) guess.voucherType = col;
+                            const c = col.toLowerCase().trim();
+                            if (c === 'date' || c.includes('inv date') || c.includes('invoice date') || c.includes('bill date') || c.includes('voucher date') || c.includes('vch date')) guess.date = col;
+                            if (c === 'inv no' || c === 'invoice no' || c === 'no' || c === 'bill no' || c.includes('voucher no') || c.includes('doc no') || c === 'invoice number' || c === 'vch no') guess.invoiceNo = col;
+                            if (c === 'party' || c === 'name' || c.includes('party name') || c.includes('customer') || c.includes('supplier') || c.includes('ledger') || c.includes('particulars')) guess.partyName = col;
+                            if (c.includes('gstin') || c.includes('gst no')) guess.gstin = col;
+
+                            if (c.includes('taxable') || c === 'basic' || c === 'assessable value' || (c.includes('amount') && !c.includes('total') && !c.includes('tax') && !c.includes('cgst') && !c.includes('sgst') && !c.includes('igst'))) {
+                                if (!guess.amount) guess.amount = col;
+                                if (!guess.taxableValue) guess.taxableValue = col;
+                            }
+                            if ((c.includes('rate') || c.includes('%')) && (c.includes('tax') || c.includes('gst'))) {
+                                if (!guess.taxRate) guess.taxRate = col;
+                                if (!guess.rate) guess.rate = col;
+                            }
+                            if (c.includes('qty') || c.includes('quantity') || c.includes('nos') || c.includes('unit')) guess.quantity = col;
+                            if (c.includes('total') || c.includes('grand total') || c.includes('invoice val') || c.includes('invoice amt') || c.includes('net amount')) guess.invoiceValue = col;
+                            if (c.includes('igst') && !c.includes('rate')) guess.igst = col;
+                            if (c.includes('cgst') && !c.includes('rate')) guess.cgst = col;
+                            if (c.includes('sgst') && !c.includes('rate')) guess.sgst = col;
+                            if (c.includes('cess') && !c.includes('rate')) guess.cess = col;
+                            if (c.includes('period')) guess.period = col;
+                            if (c.includes('reverse') || c.includes('rcm')) guess.reverseCharge = col;
                         });
+
+                        // Defaults
+                        if (!guess.quantity) guess.quantity = 'N/A';
+                        // Do NOT default voucherType.
+                        guess.voucherType = '';
+
                         setMapping(guess);
                         setStep(2);
                         if (onUpdateFile && currentFileId) onUpdateFile(currentFileId, { status: 'Processing' });
@@ -141,6 +165,11 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
     };
 
     const processMapping = () => {
+        if (!mapping.voucherType) {
+            alert("Please select a valid Voucher Type (Sales or Purchase)");
+            return;
+        }
+
         const parseNum = (v: any) => {
             if (v === null || v === undefined) return 0;
             if (typeof v === 'string') return parseFloat(v.replace(/,/g, '').replace(/%/g, '')) || 0;
@@ -158,34 +187,65 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
             } else if (typeof dateVal === 'string') { dateVal = dateVal.trim(); }
             else { dateVal = new Date().toISOString().slice(0, 10); }
 
-            const vTypeVal = String(val(mapping.voucherType) || '');
-            const vType = vTypeVal.toLowerCase().includes('pur') ? 'Purchase' : 'Sales';
+            let vType = 'Purchase';
+            if (mapping.voucherType === 'Purchase' || mapping.voucherType === 'Sales') {
+                vType = mapping.voucherType;
+            } else {
+                const rowVal = String(val(mapping.voucherType) || '');
+                if (rowVal && rowVal.toLowerCase().includes('sale')) vType = 'Sales';
+            }
+
+            let qty = 1;
+            if (mapping.quantity && mapping.quantity !== 'N/A') {
+                qty = parseNum(val(mapping.quantity)) || 1;
+            }
+
+            const taxable = parseNum(val(mapping.amount) || val(mapping.taxableValue));
+            const rate = parseNum(val(mapping.taxRate) || val(mapping.rate));
+            const total = parseNum(val(mapping.invoiceValue));
 
             return {
                 date: String(dateVal),
                 invoiceNo: String(val(mapping.invoiceNo) || '').trim(),
                 partyName: String(val(mapping.partyName) || 'Cash').trim(),
                 gstin: String(val(mapping.gstin) || '').trim(),
-                amount: parseNum(val(mapping.taxableAmount)),
-                taxRate: parseNum(val(mapping.taxRate)),
-                totalAmount: parseNum(val(mapping.totalAmount)),
-                voucherType: vType as 'Sales' | 'Purchase'
+                amount: taxable,
+                taxRate: rate,
+                totalAmount: total,
+                voucherType: vType as 'Sales' | 'Purchase',
+                quantity: qty,
+                igst: parseNum(val(mapping.igst)),
+                cgst: parseNum(val(mapping.cgst)),
+                sgst: parseNum(val(mapping.sgst)),
+                cess: parseNum(val(mapping.cess)),
+                period: String(val(mapping.period) || ''),
+                reverseCharge: String(val(mapping.reverseCharge) || '')
             };
         }).filter(t => (t.amount !== 0 || t.totalAmount !== 0) && t.invoiceNo !== '');
 
-        // Optimization: Use a map for grouping 10,000+ entries
         const groupedMap = new Map<string, ExcelVoucher>();
         flatRows.forEach(row => {
             const key = `${row.invoiceNo.toLowerCase()}_${row.partyName.toLowerCase()}_${row.date}`;
             if (!groupedMap.has(key)) {
                 groupedMap.set(key, {
                     id: uuidv4(), date: row.date, invoiceNo: row.invoiceNo, partyName: row.partyName,
-                    gstin: row.gstin, voucherType: row.voucherType, items: [], totalAmount: 0
+                    gstin: row.gstin, voucherType: row.voucherType, items: [], totalAmount: 0,
+                    period: row.period,
+                    reverseCharge: row.reverseCharge
                 });
             }
             const v = groupedMap.get(key)!;
-            v.items.push({ amount: row.amount, taxRate: row.taxRate });
-            v.totalAmount = round(v.totalAmount + row.totalAmount || (row.amount * (1 + row.taxRate / 100)));
+            v.items.push({
+                amount: row.amount,
+                taxRate: row.taxRate,
+                quantity: row.quantity,
+                igst: row.igst,
+                cgst: row.cgst,
+                sgst: row.sgst,
+                cess: row.cess
+            });
+            const lineTotal = row.amount + (row.igst || 0) + (row.cgst || 0) + (row.sgst || 0) + (row.cess || 0);
+            v.totalAmount = round(v.totalAmount + (row.totalAmount > 0 ? row.totalAmount : lineTotal));
         });
 
         const vouchers = Array.from(groupedMap.values());
@@ -211,7 +271,6 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
                 const result = await pushToTally(xml);
                 if (!result.success) errorCount += batch.length;
                 setProgress({ processed: Math.min(end, total), total, batch: i + 1, errors: errorCount });
-                // Small pause to allow UI thread to breathe
                 await new Promise(r => setTimeout(r, 100));
             }
             if (errorCount > 0) {
@@ -225,6 +284,9 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
             onPushLog('Failed', 'Bulk Import Error', 'An error occurred during push.');
         } finally { setIsProcessing(false); }
     };
+
+    const visibleColumns = allColumns.filter(col => col);
+    const pct = progress.total > 0 ? Math.round((progress.processed / progress.total) * 100) : 0;
 
     if (step === 1) {
         return (
@@ -264,50 +326,118 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
 
     if (step === 2) {
         return (
-            <div className="h-full flex flex-col gap-6 animate-fade-in overflow-hidden relative">
-                <div className="bg-[#111827] dark:bg-slate-900 p-8 rounded-[24px] border border-slate-800 shadow-2xl flex flex-col h-full min-h-0 transition-colors">
-                    <div className="flex justify-between items-center mb-8 shrink-0">
-                        <h3 className="text-xl font-bold flex items-center gap-3 text-white tracking-tight">
-                            <Database className="w-6 h-6 text-indigo-500" />
-                            Excel Column Mapping
+            <div className="flex-1 p-6 flex flex-col gap-6 animate-fade-in overflow-hidden">
+                <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                    <div className="flex justify-between items-center mb-6">
+                        <h3 className="font-bold text-lg flex items-center gap-2 text-slate-900 dark:text-white">
+                            <Database className="w-5 h-5 text-indigo-500" />
+                            Map Columns
                         </h3>
-                        <span className="text-[10px] font-bold px-3 py-1 bg-indigo-900/50 text-indigo-300 rounded-lg border border-indigo-500/30 uppercase tracking-wider">
-                            {allColumns.length} Cols Detected
+                        <span className="text-xs px-2 py-1 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 rounded-lg">
+                            Detected {allColumns.length} columns (Filtered)
                         </span>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto pr-4 scrollbar-thin scroll-smooth min-h-0">
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-10 gap-y-6 pb-4">
-                            {Object.keys(mapping).map(key => (
-                                <div key={key} className="space-y-2 group">
-                                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest group-hover:text-slate-300 transition-colors pl-1">
-                                        {key.replace(/([A-Z])/g, ' $1')}
-                                    </label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {/* Special Handling for VoucherType logic: If it's standard dropdown */}
+                        <div>
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pl-1">voucher type *</label>
+                            <div className="relative group">
+                                <select
+                                    value={mapping.voucherType}
+                                    onChange={(e) => setMapping({ ...mapping, voucherType: e.target.value })}
+                                    className="w-full px-5 py-3.5 border-2 border-slate-100 dark:border-slate-700 hover:border-indigo-400 dark:hover:border-indigo-500 rounded-2xl bg-slate-50/50 dark:bg-slate-800 text-slate-900 dark:text-white text-sm font-bold appearance-none cursor-pointer outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all shadow-sm"
+                                >
+                                    <option value="">-- Select Type --</option>
+                                    <option value="Purchase">Purchase</option>
+                                    <option value="Sales">Sales</option>
+                                </select>
+                                <ChevronDown className="absolute right-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none group-hover:text-indigo-500 transition-colors" />
+                            </div>
+                        </div>
+
+                        {/* Loop for other fields */}
+                        {Object.keys(mapping).filter(key => key !== 'voucherType' && key !== 'quantity').map(key => (
+                            <div key={key}>
+                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pl-1">{key}</label>
+                                <div className="relative group">
                                     <select
                                         value={mapping[key as keyof typeof mapping]}
-                                        onChange={(e) => setMapping({ ...mapping, [key]: e.target.value })}
-                                        className="w-full px-4 py-2.5 bg-[#1e293b] border border-slate-700 rounded-xl text-white text-xs outline-none focus:ring-2 focus:ring-indigo-500/50 shadow-inner transition-all appearance-none cursor-pointer"
+                                        onChange={(e) => setMapping({ ...mapping, [key as keyof typeof mapping]: e.target.value })}
+                                        className="w-full px-5 py-3.5 border-2 border-slate-100 dark:border-slate-700 hover:border-indigo-400 dark:hover:border-indigo-500 rounded-2xl bg-slate-50/50 dark:bg-slate-800 text-slate-900 dark:text-white text-sm font-bold appearance-none cursor-pointer outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all shadow-sm"
                                     >
                                         <option value="">Select Column</option>
-                                        {allColumns.map(c => <option key={c} value={c}>{c}</option>)}
+                                        {visibleColumns.map(c => <option key={c} value={c}>{c}</option>)}
                                     </select>
+                                    <ChevronDown className="absolute right-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none group-hover:text-indigo-500 transition-colors" />
                                 </div>
-                            ))}
+                            </div>
+                        ))}
+
+                        {/* Quantity Last */}
+                        <div>
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pl-1">quantity</label>
+                            <div className="relative group">
+                                <select
+                                    value={mapping.quantity}
+                                    onChange={(e) => setMapping({ ...mapping, quantity: e.target.value })}
+                                    className="w-full px-5 py-3.5 border-2 border-slate-100 dark:border-slate-700 hover:border-indigo-400 dark:hover:border-indigo-500 rounded-2xl bg-slate-50/50 dark:bg-slate-800 text-slate-900 dark:text-white text-sm font-bold appearance-none cursor-pointer outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all shadow-sm"
+                                >
+                                    <option value="">Select Column</option>
+                                    <option value="N/A">N/A (No Quantity)</option>
+                                    {visibleColumns.map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                                <ChevronDown className="absolute right-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none group-hover:text-indigo-500 transition-colors" />
+                            </div>
                         </div>
                     </div>
 
-                    <div className="mt-6 pt-6 flex justify-end items-center gap-8 border-t border-slate-800 shrink-0">
-                        <button onClick={() => setStep(1)} className="text-slate-400 hover:text-white font-bold text-xs transition-colors uppercase tracking-widest">Cancel</button>
-                        <button onClick={processMapping} className="bg-indigo-600 hover:bg-indigo-700 text-white px-10 py-3 rounded-xl font-black flex items-center gap-3 shadow-xl shadow-indigo-600/20 active:scale-95 transition-all text-xs uppercase tracking-widest">
-                            Analyze Data <ArrowRight className="w-4 h-4" />
+                    <div className="mt-8 flex justify-end gap-3">
+                        <button onClick={() => setStep(1)} className="px-6 py-3 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold transition-all">Cancel</button>
+                        <button
+                            onClick={processMapping}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2 shadow-xl shadow-indigo-600/20 active:scale-95 transition-all outline-none focus:ring-4 focus:ring-indigo-500/20"
+                        >
+                            Next <ArrowRight className="w-4 h-4" />
                         </button>
+                    </div>
+                </div>
+
+                <div className="flex-1 bg-white dark:bg-slate-800 rounded-[32px] border border-slate-200 dark:border-slate-700 overflow-hidden shadow-sm flex flex-col">
+                    <div className="p-6 bg-slate-50/50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
+                        <span className="font-black text-xs text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                            Preview (First 5 Rows)
+                        </span>
+                    </div>
+                    <div className="overflow-auto flex-1">
+                        <table className="w-full text-sm text-left whitespace-nowrap">
+                            <thead className="bg-white dark:bg-slate-800 text-slate-400 border-b border-slate-100 dark:border-slate-700/50 sticky top-0 z-10 shadow-sm">
+                                <tr>
+                                    {visibleColumns.map((c, i) => <th key={i} className="px-6 py-4 font-black uppercase tracking-wider text-[10px]">{c}</th>)}
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                {rawData.slice(0, 5).map((row, i) => (
+                                    <tr key={i} className="group hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
+                                        {visibleColumns.map((colName, j) => {
+                                            const idx = allColumns.indexOf(colName);
+                                            return (
+                                                <td key={j} className="px-6 py-4 text-slate-600 dark:text-slate-300 font-medium group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
+                                                    {row[idx]}
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
         );
     }
 
-    const pct = progress.total > 0 ? Math.round((progress.processed / progress.total) * 100) : 0;
     return (
         <div className="flex-1 flex flex-col gap-6 animate-fade-in h-full overflow-hidden">
             <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex justify-between items-center transition-colors shrink-0">

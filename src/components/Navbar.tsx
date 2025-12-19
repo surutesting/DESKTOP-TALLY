@@ -1,15 +1,15 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { 
-  LayoutGrid, 
-  UploadCloud, 
-  FileText, 
-  Activity, 
-  MessageSquare, 
-  Sun, 
-  Moon, 
-  WifiOff, 
-  RotateCw, 
+import {
+  LayoutGrid,
+  UploadCloud,
+  FileText,
+  Activity,
+  MessageSquare,
+  Sun,
+  Moon,
+  WifiOff,
+  RotateCw,
   Search,
   Settings,
   Lock,
@@ -37,12 +37,12 @@ interface NavbarProps {
   onLock: () => void;
 }
 
-const Navbar: React.FC<NavbarProps> = ({ 
-  currentView, 
-  onChangeView, 
-  darkMode, 
-  toggleDarkMode, 
-  tallyStatus, 
+const Navbar: React.FC<NavbarProps> = ({
+  currentView,
+  onChangeView,
+  darkMode,
+  toggleDarkMode,
+  tallyStatus,
   onCheckStatus,
   searchTerm,
   onSearchChange,
@@ -71,13 +71,13 @@ const Navbar: React.FC<NavbarProps> = ({
     setIsSyncing(true);
     setSyncSuccess(false);
     try {
-        await syncMastersFromAllCompanies();
-        setSyncSuccess(true);
-        setTimeout(() => setSyncSuccess(false), 3000);
+      await syncMastersFromAllCompanies();
+      setSyncSuccess(true);
+      setTimeout(() => setSyncSuccess(false), 3000);
     } catch (e) {
-        console.error("Manual sync failed", e);
+      console.error("Manual sync failed", e);
     } finally {
-        setIsSyncing(false);
+      setIsSyncing(false);
     }
   };
 
@@ -105,8 +105,8 @@ const Navbar: React.FC<NavbarProps> = ({
       onClick={() => onChangeView(item.id)}
       className={`
         flex items-center gap-2 px-4 py-1.5 rounded-lg transition-all duration-200 text-sm font-bold whitespace-nowrap
-        ${currentView === item.id 
-          ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' 
+        ${currentView === item.id
+          ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20'
           : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}
       `}
     >
@@ -117,7 +117,7 @@ const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <div className="flex flex-col w-full bg-[#0f172a] text-slate-300 transition-colors duration-200 shrink-0 border-b border-slate-800/80">
-      {/* Top Row: Branding and High-Level Global Utilities */}
+      {/* Top Row: Branding and System Utilities */}
       <div className="min-h-[3.5rem] px-6 py-2 flex items-center justify-between">
         {/* Logo */}
         <div className="flex items-center gap-3 shrink-0">
@@ -127,23 +127,14 @@ const Navbar: React.FC<NavbarProps> = ({
           <h1 className="text-lg font-bold text-white tracking-tight">AutoTally Ai</h1>
         </div>
 
-        {/* System Control Utilities */}
-        <div className="flex items-center gap-2 shrink-0">
-          <button 
-              onClick={handleManualRefresh} 
-              className={`p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-400 hover:text-white ${isRefreshing ? 'opacity-50 cursor-wait' : ''}`} 
-              title="Refresh Status"
-              disabled={isRefreshing}
-          >
-              <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </button>
-
+        {/* System Utilities */}
+        <div className="flex items-center gap-3 shrink-0">
           <button onClick={toggleDarkMode} className="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-400 hover:text-white" title="Toggle Theme">
-              {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
 
           <button onClick={onOpenSettings} className="p-2 hover:bg-slate-800 rounded-lg transition-colors text-slate-400 hover:text-white" title="Settings">
-              <Settings className="w-4 h-4" />
+            <Settings className="w-4 h-4" />
           </button>
 
           <div className="h-6 w-px bg-slate-700/50 mx-2"></div>
@@ -154,9 +145,9 @@ const Navbar: React.FC<NavbarProps> = ({
         </div>
       </div>
 
-      {/* Bottom Row: Navigation and Primary Working Area (Integrated Search & Status) */}
-      <div className="min-h-[4rem] px-6 py-2 flex items-center justify-between gap-6 bg-slate-900/40 border-t border-slate-800/30">
-        
+      {/* Bottom Row: Navigation, Large Search Bar, and Connectivity Area */}
+      <div className="min-h-[3.5rem] px-6 py-2 flex items-center justify-between gap-4 bg-slate-900/40 border-t border-slate-800/30">
+
         {/* Nav Items Group */}
         <div className="flex items-center gap-2 shrink-0">
           {renderNavItem(navItems[0])}
@@ -165,8 +156,8 @@ const Navbar: React.FC<NavbarProps> = ({
               onClick={() => setIsUploadsOpen(!isUploadsOpen)}
               className={`
                 flex items-center gap-2 px-4 py-1.5 rounded-lg transition-all duration-200 text-sm font-bold whitespace-nowrap
-                ${uploadOptions.some(opt => opt.id === currentView) 
-                  ? 'bg-slate-800 text-white' 
+                ${uploadOptions.some(opt => opt.id === currentView)
+                  ? 'bg-slate-800 text-white'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}
               `}
             >
@@ -194,59 +185,68 @@ const Navbar: React.FC<NavbarProps> = ({
           {navItems.slice(1).map(renderNavItem)}
         </div>
 
-        {/* PRIMARY SEARCH (Increased width and centered prominence) */}
-        <div className="flex-1 px-4 min-w-[300px]">
+        {/* Global Search Bar */}
+        <div className="flex-1 px-4 min-w-[200px]">
           <div className="relative group">
             <Search className="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 transition-colors group-focus-within:text-indigo-400" />
-            <input 
-              type="text" 
+            <input
+              type="text"
               value={searchTerm}
               onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Search invoices, ledgers, or transactions..." 
-              className="w-full h-11 pl-12 pr-4 bg-[#0f172a]/80 border border-slate-700/60 rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/50 text-white placeholder-slate-500 transition-all shadow-lg"
+              placeholder="Search invoices, ledgers, or transactions..."
+              className="w-full h-10 pl-11 pr-4 bg-[#0f172a]/60 border border-slate-700/60 rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/30 text-white placeholder-slate-500 transition-all shadow-inner"
             />
           </div>
         </div>
 
-        {/* Dynamic Status & Secondary Tools */}
+        {/* Dynamic Status & Connectivity Utilities */}
         <div className="flex items-center gap-3 shrink-0">
           {/* Sync Button */}
-          <button 
+          <button
             onClick={handleSyncMasters}
             disabled={isSyncing || !tallyStatus.online}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl border transition-all ${
-                syncSuccess 
-                ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400' 
+            className={`p-2 rounded-lg border transition-all ${syncSuccess
+                ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
                 : 'border-slate-700 hover:border-indigo-500/50 hover:bg-indigo-500/10 text-slate-400 hover:text-indigo-400 disabled:opacity-30 disabled:cursor-not-allowed'
-            }`}
+              }`}
+            title="Sync Masters"
           >
             {isSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : syncSuccess ? <CheckCircle className="w-4 h-4" /> : <Database className="w-4 h-4" />}
-            <span className="text-[11px] font-black uppercase tracking-widest hidden 2xl:inline">{isSyncing ? 'Syncing...' : syncSuccess ? 'Synced' : 'Sync Masters'}</span>
           </button>
 
           {/* Connection Indicator */}
           <div className={`flex items-center gap-3 px-4 py-2 rounded-xl border transition-all ${tallyStatus.online ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-red-500/40 bg-red-900/10 text-red-400 shadow-[0_0_15px_rgba(239,68,68,0.1)]'}`}>
             {tallyStatus.online ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
-            <span className="text-[11px] font-black uppercase tracking-widest hidden 2xl:inline">{tallyStatus.online ? 'Connected' : 'Disconnected'}</span>
+            <span className="text-[10px] font-black uppercase tracking-widest hidden xl:inline">{tallyStatus.online ? 'Connected' : 'Disconnected'}</span>
             <div className={`w-2 h-2 rounded-full ${tallyStatus.online ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : 'bg-red-500 shadow-[0_0_10px_#ef4444] animate-pulse'}`}></div>
           </div>
 
-          <div className="h-8 w-px bg-slate-800/80 mx-2"></div>
+          {/* Reconnect Icon - Moved here between Indicator and Logs */}
+          <button
+            onClick={handleManualRefresh}
+            className={`p-2 bg-slate-800/50 border border-slate-700/50 hover:bg-slate-800 rounded-lg transition-colors text-slate-400 hover:text-white ${isRefreshing ? 'opacity-50 cursor-wait' : ''}`}
+            title="Reconnect / Refresh Status"
+            disabled={isRefreshing}
+          >
+            <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </button>
+
+          <div className="h-8 w-px bg-slate-800/80 mx-1 hidden lg:block"></div>
 
           {/* Secondary Links */}
-          <div className="flex items-center gap-5">
-            <button 
+          <div className="flex items-center gap-4">
+            <button
               onClick={() => onChangeView(AppView.LOGS)}
               className={`flex items-center gap-2 text-xs font-black uppercase tracking-widest transition-colors ${currentView === AppView.LOGS ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-200'}`}
             >
-              <Activity className="w-4 h-4" />
+              <Activity className="w-3.5 h-3.5" />
               Logs
             </button>
-            <button 
+            <button
               onClick={() => setIsCalcOpen(!isCalcOpen)}
               className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 hover:text-slate-200 transition-colors"
             >
-              <Calculator className="w-4 h-4" />
+              <Calculator className="w-3.5 h-3.5" />
               Tax Calc
             </button>
           </div>

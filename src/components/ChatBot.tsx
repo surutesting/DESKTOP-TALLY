@@ -49,7 +49,29 @@ const ChatBot: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  // Load chat history from localStorage on mount
   useEffect(() => {
+    const savedMessages = localStorage.getItem('autotally_chat_history');
+    if (savedMessages) {
+      try {
+        const parsed = JSON.parse(savedMessages);
+        // Convert string timestamps back to Date objects
+        const hydrated = parsed.map((m: any) => ({
+          ...m,
+          timestamp: new Date(m.timestamp)
+        }));
+        setMessages(hydrated);
+      } catch (e) {
+        console.error("Failed to parse chat history", e);
+      }
+    }
+  }, []);
+
+  // Save chat history to localStorage whenever messages change
+  useEffect(() => {
+    if (messages.length > 0) {
+      localStorage.setItem('autotally_chat_history', JSON.stringify(messages));
+    }
     scrollToBottom();
   }, [messages]);
 
@@ -114,6 +136,7 @@ const ChatBot: React.FC = () => {
   };
 
   const resetChat = () => {
+    localStorage.removeItem('autotally_chat_history');
     try {
       chatSessionRef.current = createChatSession();
       setMessages([{

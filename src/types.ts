@@ -37,10 +37,12 @@ export interface BankTransaction {
 export interface ExcelVoucherItem {
   amount: number;
   taxRate: number;
+  quantity?: number;
   ledgerName?: string;
   cgst?: number;
   sgst?: number;
   igst?: number;
+  cess?: number; // Added
 }
 
 export interface ExcelVoucher {
@@ -51,8 +53,10 @@ export interface ExcelVoucher {
   gstin: string;
   voucherType: 'Sales' | 'Purchase';
   items: ExcelVoucherItem[];
-  totalAmount: number; // Verification total
+  totalAmount: number;
   narration?: string;
+  period?: string; // Added
+  reverseCharge?: string; // Added
 }
 
 export interface BankStatementData {
@@ -64,7 +68,7 @@ export interface BankStatementData {
 export interface ProcessedFile {
   id: string;
   file: File;
-  status: 'Pending' | 'Processing' | 'Ready' | 'Success' | 'Failed' | 'Mismatch'; 
+  status: 'Pending' | 'Processing' | 'Ready' | 'Success' | 'Failed' | 'Mismatch';
   fileName: string;
   sourceType: 'OCR_INVOICE' | 'BANK_STATEMENT' | 'EXCEL_IMPORT'; // NEW: Track source
   data?: InvoiceData;
