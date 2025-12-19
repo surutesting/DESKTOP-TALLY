@@ -3,7 +3,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { UploadCloud, FileText, ArrowRight, Loader2, CheckCircle2, AlertTriangle, Trash2, Landmark, Save, History, Building2, RefreshCw, Database } from 'lucide-react';
 import { BankStatementData, BankTransaction, ProcessedFile } from '../types';
 import { parseBankStatementWithGemini } from '../services/geminiService';
-import { getGeminiApiKey } from '../services/backendService';
 import { generateBankStatementXml, pushToTally, fetchExistingLedgers, fetchOpenCompanies, getLedgersFromCache, getCompaniesFromCache } from '../services/tallyService';
 import { BACKEND_API_KEY } from '../constants';
 import { v4 as uuidv4 } from 'uuid';
@@ -47,7 +46,6 @@ const BankStatementManager: React.FC<BankStatementManagerProps> = ({
   const [loadingLedgers, setLoadingLedgers] = useState(false);
   const [isUsingCache, setIsUsingCache] = useState(false);
 
-  const [geminiApiKey, setGeminiApiKey] = useState<string | null>(null);
 
   useEffect(() => {
     const checkDraft = () => {
@@ -55,19 +53,6 @@ const BankStatementManager: React.FC<BankStatementManagerProps> = ({
       setHasDraft(!!saved);
     };
     checkDraft();
-
-    // Fetch Gemini API key
-    const fetchKey = async () => {
-      try {
-        const result = await getGeminiApiKey(BACKEND_API_KEY);
-        if (result.success && result.geminiApiKey) {
-          setGeminiApiKey(result.geminiApiKey);
-        }
-      } catch (error) {
-        console.error("Failed to fetch Gemini API key:", error);
-      }
-    };
-    fetchKey();
   }, []);
 
   useEffect(() => {
@@ -86,6 +71,7 @@ const BankStatementManager: React.FC<BankStatementManagerProps> = ({
 
   useEffect(() => {
     if (step === 2) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       const cachedSet = getLedgersFromCache(selectedCompany);
       if (cachedSet.size > 0) {
         setLedgers(Array.from(cachedSet).sort());
@@ -139,10 +125,7 @@ const BankStatementManager: React.FC<BankStatementManagerProps> = ({
     setShowInvoiceAlert(false);
     const start = Date.now();
     try {
-      if (!geminiApiKey) {
-        throw new Error("Gemini API key not available");
-      }
-      const result = await parseBankStatementWithGemini(uploadedFile, geminiApiKey);
+      const result = await parseBankStatementWithGemini(uploadedFile);
       if (result.documentType === 'INVOICE') {
         setShowInvoiceAlert(true);
         setIsProcessing(false);
@@ -305,8 +288,8 @@ const BankStatementManager: React.FC<BankStatementManagerProps> = ({
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto scroll-smooth scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-600">
-            <table className="w-full text-sm text-left border-collapse">
+          <div className="flex-1 overflow-y-auto overflow-x-auto scroll-smooth scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-600">
+            <table className="w-full text-sm text-left border-collapse min-w-[1200px]">
               <thead className="bg-slate-50 dark:bg-slate-950/50 text-slate-400 dark:text-slate-500 font-black uppercase tracking-widest border-b border-slate-100 dark:border-slate-800 sticky top-0 z-10 text-[10px]">
                 <tr>
                   <th className="px-6 py-4 w-32">Date</th>

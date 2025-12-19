@@ -333,28 +333,6 @@ export const getHistoryFromBackend = async (
   return [];
 };
 
-// Get Gemini API Key from backend
-export const getGeminiApiKey = async (
-  apiKey: string
-): Promise<{
-  success: boolean;
-  geminiApiKey?: string;
-  message: string;
-}> => {
-  const response = await apiRequest<{ geminiApiKey: string }>(
-    `${BACKEND_API_URL}/ai/gemini-key`,
-    'GET',
-    undefined,
-    apiKey
-  );
-
-  return {
-    success: response.success,
-    geminiApiKey: response.data?.geminiApiKey,
-    message: response.message,
-  };
-};
-
 export default {
   authenticateBackend,
   validateApiKey,

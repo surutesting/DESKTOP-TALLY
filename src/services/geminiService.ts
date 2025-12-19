@@ -1,7 +1,7 @@
 
-import { GoogleGenAI, Type, Chat } from "@google/genai";
 import { InvoiceData, BankTransaction, BankStatementData } from "../types";
 import { v4 as uuidv4 } from 'uuid';
+import { BACKEND_API_URL, BACKEND_API_KEY } from '../constants';
 
 const SYSTEM_INSTRUCTION = `
 You are an expert Indian GST Invoice Accountant. Extract data for Tally Prime integration.
@@ -24,49 +24,72 @@ FORMAT:
 - suggestedLedger: Guess based on narration (e.g., 'SWIGGY' -> 'Staff Welfare')
 `;
 
-export const parseInvoiceWithGemini = async (file: File, geminiApiKey: string): Promise<InvoiceData> => {
-  const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+// Helper function to call backend Gemini proxy
+const callGeminiProxy = async (model: string, contents: any, config?: any): Promise<any> => {
+  const response = await fetch(`${BACKEND_API_URL}/ai/gemini-proxy`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${BACKEND_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model,
+      contents,
+      config
+    })
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to call Gemini API');
+  }
+
+  const data = await response.json();
+  return data;
+};
+
+export const parseInvoiceWithGemini = async (file: File, _geminiApiKey?: string): Promise<InvoiceData> => {
   const base64Data = await fileToBase64(file);
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: {
+  const response = await callGeminiProxy(
+    'gemini-1.5-flash',
+    {
       parts: [
-        { inlineData: { mimeType: file.type, data: base64Data } },
+        { inline_data: { mime_type: file.type, data: base64Data } },
         { text: "Parse this invoice for Tally accounting." }
       ]
     },
-    config: {
-      systemInstruction: SYSTEM_INSTRUCTION,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
+    {
+      system_instruction: SYSTEM_INSTRUCTION,
+      response_mime_type: "application/json",
+      response_schema: {
+        type: "object",
         properties: {
-          documentType: { type: Type.STRING, enum: ['INVOICE', 'BANK_STATEMENT', 'INVALID'] },
-          supplierName: { type: Type.STRING },
-          supplierGstin: { type: Type.STRING },
-          buyerName: { type: Type.STRING },
-          buyerGstin: { type: Type.STRING },
-          invoiceNumber: { type: Type.STRING },
-          invoiceDate: { type: Type.STRING },
+          documentType: { type: "string", enum: ['INVOICE', 'BANK_STATEMENT', 'INVALID'] },
+          supplierName: { type: "string" },
+          supplierGstin: { type: "string" },
+          buyerName: { type: "string" },
+          buyerGstin: { type: "string" },
+          invoiceNumber: { type: "string" },
+          invoiceDate: { type: "string" },
           lineItems: {
-            type: Type.ARRAY,
+            type: "array",
             items: {
-              type: Type.OBJECT,
+              type: "object",
               properties: {
-                description: { type: Type.STRING },
-                hsn: { type: Type.STRING },
-                quantity: { type: Type.NUMBER },
-                rate: { type: Type.NUMBER },
-                amount: { type: Type.NUMBER },
-                gstRate: { type: Type.NUMBER }
+                description: { type: "string" },
+                hsn: { type: "string" },
+                quantity: { type: "number" },
+                rate: { type: "number" },
+                amount: { type: "number" },
+                gstRate: { type: "number" }
               }
             }
           }
         }
       }
     }
-  });
+  );
 
   const data = JSON.parse(response.text);
   if (data.documentType === 'INVALID') throw new Error("Document not recognized.");
@@ -86,23 +109,22 @@ export const parseInvoiceWithGemini = async (file: File, geminiApiKey: string): 
   };
 };
 
-export const parseBankStatementWithGemini = async (file: File, geminiApiKey: string): Promise<BankStatementData> => {
-  const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+export const parseBankStatementWithGemini = async (file: File, _geminiApiKey?: string): Promise<BankStatementData> => {
   const base64Data = await fileToBase64(file);
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: {
+  const response = await callGeminiProxy(
+    'gemini-1.5-flash',
+    {
       parts: [
-        { inlineData: { mimeType: file.type, data: base64Data } },
+        { inline_data: { mime_type: file.type, data: base64Data } },
         { text: "Extract transactions from this bank statement." }
       ]
     },
-    config: {
-      systemInstruction: BANK_INSTRUCTION,
-      responseMimeType: "application/json"
+    {
+      system_instruction: BANK_INSTRUCTION,
+      response_mime_type: "application/json"
     }
-  });
+  );
 
   const data = JSON.parse(response.text);
   return {
@@ -118,30 +140,55 @@ export const parseBankStatementWithGemini = async (file: File, geminiApiKey: str
   };
 };
 
-export const createChatSession = (geminiApiKey: string): Chat => {
-  const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-  return ai.chats.create({
-    model: 'gemini-3-pro-preview',
-    config: {
-      systemInstruction: 'You are AutoTally Assistant, an expert in Tally Prime, Indian GST laws, and accounting automation. You help users with ledger mapping, XML generation, and GST compliance.',
-    },
-  });
+// Chat session management (simplified for backend proxy)
+let chatHistory: Array<{ role: string, parts: Array<{ text: string }> }> = [];
+
+export const createChatSession = (_geminiApiKey?: string) => {
+  // Reset chat history
+  chatHistory = [];
+
+  return {
+    sendMessage: async ({ message }: { message: string }) => {
+      // Add user message to history
+      chatHistory.push({
+        role: 'user',
+        parts: [{ text: message }]
+      });
+
+      const response = await callGeminiProxy(
+        'gemini-1.5-pro',
+        chatHistory,
+        {
+          system_instruction: 'You are AutoTally Assistant, an expert in Tally Prime, Indian GST laws, and accounting automation. You help users with ledger mapping, XML generation, and GST compliance.'
+        }
+      );
+
+      // Add model response to history
+      chatHistory.push({
+        role: 'model',
+        parts: [{ text: response.text }]
+      });
+
+      return {
+        text: response.text
+      };
+    }
+  };
 };
 
 // Added missing image analysis function
-export const analyzeImageWithGemini = async (file: File, prompt: string, geminiApiKey: string): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+export const analyzeImageWithGemini = async (file: File, prompt: string, _geminiApiKey?: string): Promise<string> => {
   const base64Data = await fileToBase64(file);
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: {
+  const response = await callGeminiProxy(
+    'gemini-1.5-flash',
+    {
       parts: [
-        { inlineData: { mimeType: file.type, data: base64Data } },
+        { inline_data: { mime_type: file.type, data: base64Data } },
         { text: prompt || "Analyze this document." }
       ]
     }
-  });
+  );
 
   return response.text || "No analysis result.";
 };

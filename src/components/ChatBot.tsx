@@ -2,9 +2,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Bot, User, Loader2, Eraser, MessageSquare } from 'lucide-react';
 import { createChatSession } from '../services/geminiService';
-import { getGeminiApiKey } from '../services/backendService';
-import { Chat } from '@google/genai';
-import { BACKEND_API_KEY } from '../constants';
 
 interface Message {
   id: string;
@@ -24,39 +21,24 @@ const ChatBot: React.FC = () => {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [geminiApiKey, setGeminiApiKey] = useState<string | null>(null);
-  const chatSessionRef = useRef<Chat | null>(null);
+  const chatSessionRef = useRef<any | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const initializeChat = async () => {
       try {
-        console.log('ChatBot: Initializing chat...');
-        console.log('ChatBot: BACKEND_API_KEY =', BACKEND_API_KEY);
-        console.log('ChatBot: Calling getGeminiApiKey...');
-
-        // Fetch Gemini API key from backend
-        const result = await getGeminiApiKey(BACKEND_API_KEY);
-
-        console.log('ChatBot: getGeminiApiKey result =', result);
-
-        if (result.success && result.geminiApiKey) {
-          console.log('ChatBot: Got Gemini API key, creating session...');
-          setGeminiApiKey(result.geminiApiKey);
-          chatSessionRef.current = createChatSession(result.geminiApiKey);
-          console.log('ChatBot: Session created successfully');
-        } else {
-          console.error("Failed to get Gemini API key:", result.message);
-          const errorMsg: Message = {
-            id: Date.now().toString(),
-            role: 'model',
-            text: 'Unable to initialize AI chat. Please check your backend connection.',
-            timestamp: new Date()
-          };
-          setMessages(prev => [...prev, errorMsg]);
-        }
+        console.log('ChatBot: Initializing chat session...');
+        chatSessionRef.current = createChatSession();
+        console.log('ChatBot: Session created successfully');
       } catch (e) {
         console.error("Failed to initialize chat session", e);
+        const errorMsg: Message = {
+          id: Date.now().toString(),
+          role: 'model',
+          text: 'Unable to initialize AI chat. Please check your backend connection.',
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, errorMsg]);
       }
     };
 
@@ -76,22 +58,12 @@ const ChatBot: React.FC = () => {
 
     if (!chatSessionRef.current) {
       try {
-        if (!geminiApiKey) {
-          const errorMsg: Message = {
-            id: (Date.now()).toString(),
-            role: 'model',
-            text: "AI Chat Engine unavailable. Gemini API key not loaded.",
-            timestamp: new Date()
-          };
-          setMessages(prev => [...prev, errorMsg]);
-          return;
-        }
-        chatSessionRef.current = createChatSession(geminiApiKey);
+        chatSessionRef.current = createChatSession();
       } catch (e) {
         const errorMsg: Message = {
           id: (Date.now()).toString(),
           role: 'model',
-          text: "AI Chat Engine unavailable. Please check your API configuration.",
+          text: "AI Chat Engine unavailable. Please check your backend connection.",
           timestamp: new Date()
         };
         setMessages(prev => [...prev, errorMsg]);
@@ -143,11 +115,7 @@ const ChatBot: React.FC = () => {
 
   const resetChat = () => {
     try {
-      if (!geminiApiKey) {
-        console.error("Cannot reset chat: Gemini API key not available");
-        return;
-      }
-      chatSessionRef.current = createChatSession(geminiApiKey);
+      chatSessionRef.current = createChatSession();
       setMessages([{
         id: Date.now().toString(),
         role: 'model',

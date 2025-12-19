@@ -7,7 +7,6 @@ import TallyLogs from './components/TallyLogs';
 import Dashboard from './components/Dashboard';
 import InvoiceUpload from './components/InvoiceUpload';
 import ChatBot from './components/ChatBot';
-import ImageAnalyzer from './components/ImageAnalyzer';
 import BankStatementManager from './components/BankStatementManager';
 import ExcelImportManager from './components/ExcelImportManager';
 import Navbar from './components/Navbar';
@@ -16,10 +15,9 @@ import SettingsModal from './components/SettingsModal';
 import AuthScreen from './components/AuthScreen';
 import { InvoiceData, LogEntry, AppView, ProcessedFile } from './types';
 import { ArrowRight, Loader2, CheckCircle2, X, FileText, AlertTriangle } from 'lucide-react';
-import { generateTallyXml, pushToTally, fetchExistingLedgers, checkTallyConnection } from './services/tallyService';
+import { checkTallyConnection, fetchExistingLedgers, generateTallyXml, pushToTally } from './services/tallyService';
 import { parseInvoiceWithGemini } from './services/geminiService';
-import { getGeminiApiKey } from './services/backendService';
-import { saveLogToDB, saveInvoiceToDB } from './services/dbService';
+import { saveInvoiceToDB, saveLogToDB } from './services/dbService';
 import { TALLY_API_URL, EMPTY_INVOICE, BACKEND_API_KEY } from './constants';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -88,23 +86,13 @@ const App: React.FC = () => {
     useEffect(() => {
         if (isAuthenticated) {
             checkStatus();
-            // Fetch Gemini API key from backend
-            fetchGeminiKey();
         }
     }, [isAuthenticated]);
 
-    const fetchGeminiKey = async () => {
-        try {
-            const result = await getGeminiApiKey(BACKEND_API_KEY);
-            if (result.success && result.geminiApiKey) {
-                setGeminiApiKey(result.geminiApiKey);
-            } else {
-                console.error("Failed to fetch Gemini API key:", result.message);
-            }
-        } catch (error) {
-            console.error("Error fetching Gemini API key:", error);
-        }
-    };
+    // Auto-scroll to top when view changes
+    useEffect(() => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, [currentView]);
 
     // Sync currentInvoice
     useEffect(() => {
@@ -206,10 +194,10 @@ const App: React.FC = () => {
         setProcessedFiles(prev => prev.map(f => f.id === entry.id ? { ...f, status: 'Processing' } : f));
         const start = Date.now();
         try {
-            if (!geminiApiKey) {
-                throw new Error("Gemini API key not available");
+            if (!isAuthenticated) {
+                throw new Error("User not authenticated");
             }
-            const data = await parseInvoiceWithGemini(entry.file, geminiApiKey);
+            const data = await parseInvoiceWithGemini(entry.file);
 
             if (data.documentType === 'BANK_STATEMENT') {
                 setProcessedFiles(prev => prev.map(f => f.id === entry.id ? { ...f, status: 'Mismatch', error: "Detected as Bank Statement" } : f));
@@ -526,7 +514,6 @@ const App: React.FC = () => {
             />
         );
         if (currentView === AppView.CHAT) return <ChatBot />;
-        if (currentView === AppView.IMAGE_ANALYSIS) return <ImageAnalyzer />;
         if (currentView === AppView.LOGS) return <TallyLogs logs={logs} />;
         return null;
     };
