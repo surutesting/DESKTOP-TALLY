@@ -1,11 +1,12 @@
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 import os
 from dotenv import load_dotenv
 import google.generativeai as genai
 from pdf_processor import split_pdf_to_images, get_pdf_page_count
+import database
 
 # Load environment variables
 load_dotenv()
@@ -452,6 +453,174 @@ Rules:
         raise HTTPException(
             status_code=500,
             detail=f"Error processing bank statement: {str(e)}"
+        )
+
+
+# ==================== INVOICE MANAGEMENT ENDPOINTS ====================
+
+class InvoiceSaveRequest(BaseModel):
+    invoice_id: str
+    invoice_data: Dict[str, Any]
+    status: str = "Ready"
+
+
+@app.post("/invoices/save")
+async def save_invoice_endpoint(
+    request: InvoiceSaveRequest,
+    authorization: str = Header(None)
+):
+    """Save or update an invoice"""
+    # Validate API key and get user_id
+    user_id = validate_api_key(authorization)
+    
+    try:
+        success = database.save_invoice(
+            invoice_id=request.invoice_id,
+            user_id=user_id,
+            invoice_data=request.invoice_data,
+            status=request.status
+        )
+        
+        if success:
+            return {
+                "success": True,
+                "message": "Invoice saved successfully",
+                "invoice_id": request.invoice_id
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to save invoice")
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error saving invoice: {str(e)}"
+        )
+
+
+@app.get("/invoices/list")
+async def list_invoices(
+    limit: int = 50,
+    authorization: str = Header(None)
+):
+    """Get list of invoices for the authenticated user"""
+    # Validate API key and get user_id
+    user_id = validate_api_key(authorization)
+    
+    try:
+        invoices = database.get_invoices(user_id=user_id, limit=limit)
+        return {
+            "success": True,
+            "invoices": invoices,
+            "count": len(invoices)
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching invoices: {str(e)}"
+        )
+
+
+@app.delete("/invoices/delete/{invoice_id}")
+async def delete_invoice(
+    invoice_id: str,
+    authorization: str = Header(None)
+):
+    """Delete an invoice"""
+    # Validate API key and get user_id
+    user_id = validate_api_key(authorization)
+    
+    try:
+        success = database.delete_invoice(invoice_id=invoice_id, user_id=user_id)
+        
+        if success:
+            return {
+                "success": True,
+                "message": "Invoice deleted successfully"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error deleting invoice: {str(e)}"
+        )
+
+
+# ==================== LOGGING ENDPOINTS ====================
+
+class LogEventRequest(BaseModel):
+    log_id: str
+    event_type: str = "general"
+    method: str = ""
+    endpoint: str = ""
+    status: str = ""
+    message: str = ""
+    response: str = ""
+
+
+@app.post("/logs/event")
+async def log_event(
+    request: LogEventRequest,
+    authorization: str = Header(None)
+):
+    """Log an event"""
+    # Validate API key and get user_id
+    user_id = validate_api_key(authorization)
+    
+    try:
+        log_data = {
+            "event_type": request.event_type,
+            "method": request.method,
+            "endpoint": request.endpoint,
+            "status": request.status,
+            "message": request.message,
+            "response": request.response
+        }
+        
+        success = database.save_log(
+            log_id=request.log_id,
+            user_id=user_id,
+            log_data=log_data
+        )
+        
+        if success:
+            return {
+                "success": True,
+                "message": "Event logged successfully"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to log event")
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error logging event: {str(e)}"
+        )
+
+
+@app.get("/history")
+async def get_history(
+    limit: int = 100,
+    authorization: str = Header(None)
+):
+    """Get event history for the authenticated user"""
+    # Validate API key and get user_id
+    user_id = validate_api_key(authorization)
+    
+    try:
+        history = database.get_history(user_id=user_id, limit=limit)
+        return {
+            "success": True,
+            "history": history,
+            "count": len(history)
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching history: {str(e)}"
         )
 
 
