@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backend Connection Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #0f172a;
+            color: #f1f5f9;
+        }
+
+        .test-card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 24px;
+            margin: 20px 0;
+        }
+
+        h1 {
+            color: #6366f1;
+            margin-bottom: 10px;
+        }
+
+        .status {
+            padding: 8px 16px;
+            border-radius: 6px;
+            display: inline-block;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+
+        .status.loading {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .status.success {
+            background: #10b981;
+            color: white;
+        }
+
+        .status.error {
+            background: #ef4444;
+            color: white;
+        }
+
+        button {
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            margin: 10px 5px 10px 0;
+        }
+
+        button:hover {
+            background: #4f46e5;
+        }
+
+        pre {
+            background: #0f172a;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            border: 1px solid #334155;
+        }
+
+        .info {
+            color: #94a3b8;
+            font-size: 14px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🔌 Backend Connection Test</h1>
+    <p class="info">Testing connection between React app and Render backend server</p>
+
+    <div class="test-card">
+        <h2>1. Render Server Status</h2>
+        <div id="render-status" class="status loading">Testing...</div>
+        <button onclick="testRenderServer()">Test Again</button>
+        <pre id="render-response"></pre>
+    </div>
+
+    <div class="test-card">
+        <h2>2. Tally Connection (Local)</h2>
+        <div id="tally-status" class="status loading">Testing...</div>
+        <button onclick="testTallyConnection()">Test Again</button>
+        <pre id="tally-response"></pre>
+    </div>
+
+    <div class="test-card">
+        <h2>3. Architecture Summary</h2>
+        <pre id="architecture-info"></pre>
+    </div>
+
+    <script>
+        const RENDER_URL = 'https://desktopserver.onrender.com';
+        const TALLY_URL = 'http://127.0.0.1:9000';
+
+        async function testRenderServer() {
+            const statusEl = document.getElementById('render-status');
+            const responseEl = document.getElementById('render-response');
+
+            statusEl.className = 'status loading';
+            statusEl.textContent = 'Testing Render server...';
+            responseEl.textContent = 'Connecting...';
+
+            try {
+                const startTime = Date.now();
+                const response = await fetch(`${RENDER_URL}/health`, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                const duration = Date.now() - startTime;
+
+                if (response.ok) {
+                    const data = await response.json();
+                    statusEl.className = 'status success';
+                    statusEl.textContent = `✅ Connected (${duration}ms)`;
+                    responseEl.textContent = JSON.stringify(data, null, 2);
+                } else {
+                    statusEl.className = 'status error';
+                    statusEl.textContent = `❌ Error: ${response.status}`;
+                    responseEl.textContent = await response.text();
+                }
+            } catch (error) {
+                statusEl.className = 'status error';
+                statusEl.textContent = '❌ Connection Failed';
+                responseEl.textContent = `Error: ${error.message}\n\nNote: Render free tier services sleep after inactivity.\nFirst request may take 30-60 seconds to wake up the server.`;
+            }
+        }
+
+        async function testTallyConnection() {
+            const statusEl = document.getElementById('tally-status');
+            const responseEl = document.getElementById('tally-response');
+
+            statusEl.className = 'status loading';
+            statusEl.textContent = 'Testing Tally connection...';
+            responseEl.textContent = 'Connecting to localhost:9000...';
+
+            try {
+                const response = await fetch(`${TALLY_URL}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'text/xml'
+                    },
+                    body: `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE><ID>LicenseInfo</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></DESC></BODY></ENVELOPE>`
+                });
+
+                if (response.ok) {
+                    const text = await response.text();
+                    statusEl.className = 'status success';
+                    statusEl.textContent = '✅ Tally Connected';
+                    responseEl.textContent = text.substring(0, 500) + '...';
+                } else {
+                    statusEl.className = 'status error';
+                    statusEl.textContent = `❌ Error: ${response.status}`;
+                    responseEl.textContent = await response.text();
+                }
+            } catch (error) {
+                statusEl.className = 'status error';
+                statusEl.textContent = '❌ Tally Not Running';
+                responseEl.textContent = `Error: ${error.message}\n\nMake sure Tally Prime is running on port 9000.`;
+            }
+        }
+
+        function showArchitecture() {
+            const archEl = document.getElementById('architecture-info');
+            archEl.textContent = `Current Architecture:
+
+📱 REACT APP (Frontend)
+   ↓
+   ├─→ 🌐 RENDER SERVER (https://desktopserver.onrender.com)
+   │    └─→ AI Processing (Gemini API)
+   │    └─→ Document Processing
+   │    └─→ Data Storage
+   │
+   └─→ 💼 TALLY PRIME (localhost:9000)
+        └─→ XML Import/Export
+        └─→ Ledger Management
+        └─→ Voucher Creation
+
+✅ Backend does NOT connect to Tally
+✅ React is the middleware between Backend and Tally
+✅ All Tally operations happen locally`;
+        }
+
+        // Run tests on load
+        window.onload = () => {
+            testRenderServer();
+            testTallyConnection();
+            showArchitecture();
+        };
+    </script>
+</body>
+
+</html>

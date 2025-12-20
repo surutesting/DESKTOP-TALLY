@@ -21,6 +21,7 @@ import { saveInvoiceToDB, saveLogToDB } from './services/dbService';
 import { TALLY_API_URL, EMPTY_INVOICE, BACKEND_API_KEY } from './constants';
 import { v4 as uuidv4 } from 'uuid';
 
+
 const App: React.FC = () => {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [currentView, setCurrentView] = useState<AppView>(AppView.DASHBOARD);
