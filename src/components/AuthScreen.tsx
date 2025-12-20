@@ -24,7 +24,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
-    
+
     // Artificial delay for better UX and to prevent brute-force speed
     await new Promise(r => setTimeout(r, 500));
 
@@ -63,13 +63,13 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
       <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden animate-fade-in">
-        
+
         {/* Header */}
         <div className="bg-slate-900 p-8 text-center relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-indigo-600/20 to-transparent"></div>
           <div className="relative z-10 flex flex-col items-center">
             <div className="w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center mb-4 shadow-xl border border-slate-700">
-                {mode === 'setup' ? <ShieldCheck className="w-8 h-8 text-emerald-400" /> : <Lock className="w-8 h-8 text-indigo-400" />}
+              {mode === 'setup' ? <ShieldCheck className="w-8 h-8 text-emerald-400" /> : <Lock className="w-8 h-8 text-indigo-400" />}
             </div>
             <h1 className="text-2xl font-bold text-white mb-1">AutoTally AI</h1>
             <p className="text-slate-400 text-sm">Secure Automation Environment</p>
@@ -89,7 +89,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
                   type="password"
                   value={pin}
                   onChange={(e) => { setPin(e.target.value); setError(''); }}
-                  className="w-full px-4 py-4 text-center text-2xl font-bold tracking-widest bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white placeholder-slate-400"
+                  className="w-full px-4 py-4 text-center text-2xl font-bold tracking-widest bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-slate-900 dark:text-white placeholder-slate-400"
                   placeholder="••••"
                   autoFocus
                   maxLength={8}
@@ -103,7 +103,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
                     type="password"
                     value={confirmPin}
                     onChange={(e) => { setConfirmPin(e.target.value); setError(''); }}
-                    className="w-full px-4 py-4 text-center text-2xl font-bold tracking-widest bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white placeholder-slate-400"
+                    className="w-full px-4 py-4 text-center text-2xl font-bold tracking-widest bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-slate-900 dark:text-white placeholder-slate-400"
                     placeholder="••••"
                     maxLength={8}
                   />
@@ -121,28 +121,27 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
             <button
               type="submit"
               disabled={isLoading || !pin}
-              className={`w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 ${
-                isLoading 
-                  ? 'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed' 
+              className={`w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 ${isLoading
+                  ? 'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed'
                   : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-              }`}
+                }`}
             >
               {isLoading ? 'Verifying...' : (mode === 'setup' ? 'Set PIN & Continue' : 'Unlock')}
               {!isLoading && <ArrowRight className="w-5 h-5" />}
             </button>
           </form>
-          
+
           {mode === 'setup' && (
-             <p className="text-xs text-center text-slate-400 mt-6">
-                This PIN will be stored locally in your browser to protect your financial data.
-             </p>
+            <p className="text-xs text-center text-slate-400 mt-6">
+              This PIN will be stored locally in your browser to protect your financial data.
+            </p>
           )}
         </div>
-        
+
         <div className="bg-slate-50 dark:bg-slate-900/50 p-4 border-t border-slate-200 dark:border-slate-800 flex justify-center">
-            <div className="flex items-center gap-2 text-xs text-slate-400 font-mono">
-                <ShieldCheck className="w-3 h-3" /> End-to-End Encrypted (Local)
-            </div>
+          <div className="flex items-center gap-2 text-xs text-slate-400 font-mono">
+            <ShieldCheck className="w-3 h-3" /> End-to-End Encrypted (Local)
+          </div>
         </div>
       </div>
     </div>
