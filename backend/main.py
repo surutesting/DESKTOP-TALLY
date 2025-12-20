@@ -186,14 +186,36 @@ async def gemini_proxy(
     except Exception as e:
         # Log the full error for debugging
         import traceback
-        print(f"ERROR: {str(e)}")
-        print(f"Traceback: {traceback.format_exc()}")
+        import uuid
+        error_msg = str(e)
+        error_trace = traceback.format_exc()
+        
+        print(f"ERROR: {error_msg}")
+        print(f"Traceback: {error_trace}")
         print(f"Request contents type: {type(request.contents)}")
         print(f"Request contents: {request.contents}")
         
+        # Save error to database
+        try:
+            user_id = validate_api_key(authorization)
+            database.save_log(
+                log_id=str(uuid.uuid4()),
+                user_id=user_id,
+                log_data={
+                    "event_type": "gemini_error",
+                    "method": "POST",
+                    "endpoint": "/ai/gemini-proxy",
+                    "status": "Error",
+                    "message": f"Gemini API error: {error_msg}",
+                    "response": error_trace[:500]  # Limit trace length
+                }
+            )
+        except Exception as log_error:
+            print(f"Failed to log error: {log_error}")
+        
         raise HTTPException(
             status_code=500,
-            detail=f"Gemini API error: {str(e)}"
+            detail=f"Gemini API error: {error_msg}"
         )
 
 
@@ -330,12 +352,34 @@ Return ONLY the JSON object, no markdown formatting."""
         
     except Exception as e:
         import traceback
-        print(f"ERROR processing invoice: {str(e)}")
-        print(f"Traceback: {traceback.format_exc()}")
+        import uuid
+        error_msg = str(e)
+        error_trace = traceback.format_exc()
+        
+        print(f"ERROR processing invoice: {error_msg}")
+        print(f"Traceback: {error_trace}")
+        
+        # Save error to database
+        try:
+            user_id = validate_api_key(authorization)
+            database.save_log(
+                log_id=str(uuid.uuid4()),
+                user_id=user_id,
+                log_data={
+                    "event_type": "invoice_processing_error",
+                    "method": "POST",
+                    "endpoint": "/ai/process-invoice-pdf",
+                    "status": "Error",
+                    "message": f"Invoice processing error: {error_msg}",
+                    "response": error_trace[:500]
+                }
+            )
+        except Exception as log_error:
+            print(f"Failed to log error: {log_error}")
         
         raise HTTPException(
             status_code=500,
-            detail=f"Error processing invoice: {str(e)}"
+            detail=f"Error processing invoice: {error_msg}"
         )
 
 
@@ -447,12 +491,34 @@ Rules:
         
     except Exception as e:
         import traceback
-        print(f"ERROR processing bank statement: {str(e)}")
-        print(f"Traceback: {traceback.format_exc()}")
+        import uuid
+        error_msg = str(e)
+        error_trace = traceback.format_exc()
+        
+        print(f"ERROR processing bank statement: {error_msg}")
+        print(f"Traceback: {error_trace}")
+        
+        # Save error to database
+        try:
+            user_id = validate_api_key(authorization)
+            database.save_log(
+                log_id=str(uuid.uuid4()),
+                user_id=user_id,
+                log_data={
+                    "event_type": "bank_statement_error",
+                    "method": "POST",
+                    "endpoint": "/ai/process-bank-statement-pdf",
+                    "status": "Error",
+                    "message": f"Bank statement processing error: {error_msg}",
+                    "response": error_trace[:500]
+                }
+            )
+        except Exception as log_error:
+            print(f"Failed to log error: {log_error}")
         
         raise HTTPException(
             status_code=500,
-            detail=f"Error processing bank statement: {str(e)}"
+            detail=f"Error processing bank statement: {error_msg}"
         )
 
 
