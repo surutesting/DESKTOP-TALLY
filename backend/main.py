@@ -56,14 +56,15 @@ def validate_api_key(authorization: str = Header(None)):
     return api_key
 
 
+
 @app.get("/")
 async def root():
     """Health check endpoint"""
     return {
         "status": "online",
         "service": "AutoTally Backend API",
-        "version": "2.0.0",
-        "features": ["gemini-proxy"]
+        "version": "3.0.0",
+        "features": ["gemini-proxy", "invoice-storage", "logging", "error-tracking"]
     }
 
 
