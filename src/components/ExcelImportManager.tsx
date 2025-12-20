@@ -9,6 +9,10 @@ interface ExcelImportManagerProps {
     onPushLog: (status: 'Success' | 'Failed', message: string, response?: string) => void;
     onRegisterFile?: (file: File) => string;
     onUpdateFile?: (id: string, updates: Partial<ProcessedFile>) => void;
+    externalFile?: File | null; // File from dashboard re-open
+    externalFileId?: string | null; // File ID from dashboard
+    externalMappedData?: ExcelVoucher[] | null; // Pre-loaded mapped data
+    externalMapping?: any; // Pre-loaded column mapping
 }
 
 // Precision Helper
@@ -16,7 +20,7 @@ const round = (num: number): number => {
     return Math.round((num + Number.EPSILON) * 100) / 100;
 };
 
-const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRegisterFile, onUpdateFile }) => {
+const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRegisterFile, onUpdateFile, externalFile, externalFileId, externalMappedData, externalMapping }) => {
     const [step, setStep] = useState<1 | 2 | 3>(1);
     const [file, setFile] = useState<File | null>(null);
     const [fileId, setFileId] = useState<string | null>(null);
@@ -32,6 +36,7 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
     const [loadingCompanies, setLoadingCompanies] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [allColumns, setAllColumns] = useState<string[]>([]);
+    const [showNotification, setShowNotification] = useState(false);
 
     const [mapping, setMapping] = useState({
         voucherType: '',
@@ -63,10 +68,59 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
         }
     }, [step, mappedData]);
 
+    // Load companies on initial mount
+    useEffect(() => {
+        loadCompanies();
+    }, []);
+
+    // Load external file if provided (from dashboard re-open)
+    useEffect(() => {
+        if (externalFile && step === 1) {
+            setFile(externalFile);
+            if (externalFileId) setFileId(externalFileId); // Set the file ID
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                const dataBuffer = evt.target?.result;
+                if (!dataBuffer) return;
+                try {
+                    const wb = read(dataBuffer, { type: 'array' });
+                    const ws = wb.Sheets[wb.SheetNames[0]];
+                    const data = utils.sheet_to_json(ws, { header: 1 }) as any[][];
+                    if (data.length > 0) {
+                        const header = (data[0] || []).map(String);
+                        setAllColumns(header);
+                        setRawData(data.slice(1));
+                        setStep(2); // Skip to map columns
+                    }
+                } catch (err) {
+                    console.error('Error loading external file:', err);
+                }
+            };
+            reader.readAsArrayBuffer(externalFile);
+        }
+    }, [externalFile]);
+
+    // Load external mapped data if provided (from dashboard re-open)
+    useEffect(() => {
+        if (externalMappedData && externalMappedData.length > 0) {
+            setMappedData(externalMappedData);
+            setProgress({ processed: 0, total: externalMappedData.length, batch: 0, errors: 0 });
+            setStep(3); // Skip to review
+        }
+    }, [externalMappedData]);
+
+    // Load external mapping if provided (from dashboard re-open)
+    useEffect(() => {
+        if (externalMapping) {
+            setMapping(externalMapping);
+        }
+    }, [externalMapping]);
+
     const loadCompanies = async () => {
         setLoadingCompanies(true);
         try {
             const list = await fetchOpenCompanies();
+            console.log('Loaded companies:', list);
             setCompanies(list);
             if (list.length > 0 && !selectedCompany) setSelectedCompany(list[0]);
         } catch (e) {
@@ -166,7 +220,8 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
 
     const processMapping = () => {
         if (!mapping.voucherType) {
-            alert("Please select a valid Voucher Type (Sales or Purchase)");
+            setShowNotification(true);
+            setTimeout(() => setShowNotification(false), 3000);
             return;
         }
 
@@ -252,7 +307,7 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
         setMappedData(vouchers);
         setProgress({ processed: 0, total: vouchers.length, batch: 0, errors: 0 });
         setStep(3);
-        if (onUpdateFile && fileId) onUpdateFile(fileId, { status: 'Ready', correctEntries: vouchers.length });
+        if (onUpdateFile && fileId) onUpdateFile(fileId, { status: 'Ready', correctEntries: vouchers.length, excelMapping: mapping });
     };
 
     const startBulkPush = async () => {
@@ -290,7 +345,7 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
 
     if (step === 1) {
         return (
-            <div className="flex flex-col h-full gap-6 animate-fade-in relative transition-colors overflow-hidden">
+            <div className="flex flex-col h-full gap-6 animate-fade-in relative transition-colors overflow-y-auto">
                 <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex justify-between items-center shrink-0">
                     <div className="flex items-center gap-4">
                         <div className="w-12 h-12 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl flex items-center justify-center shadow-inner">
@@ -326,7 +381,13 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
 
     if (step === 2) {
         return (
-            <div className="flex-1 p-6 flex flex-col gap-6 animate-fade-in overflow-hidden">
+            <div className="flex-1 p-6 flex flex-col gap-6 animate-fade-in overflow-hidden relative">
+                {showNotification && (
+                    <div className="absolute top-4 right-4 z-50 bg-red-500 text-white px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 animate-fade-in">
+                        <AlertTriangle className="w-5 h-5" />
+                        <span className="font-bold">Please select a valid Voucher Type (Sales or Purchase)</span>
+                    </div>
+                )}
                 <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
                     <div className="flex justify-between items-center mb-6">
                         <h3 className="font-bold text-lg flex items-center gap-2 text-slate-900 dark:text-white">
@@ -338,7 +399,7 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
                         </span>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-h-[500px] overflow-y-auto pr-2 scrollbar-thin">
                         {/* Special Handling for VoucherType logic: If it's standard dropdown */}
                         <div>
                             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pl-1">voucher type *</label>
@@ -495,13 +556,22 @@ const ExcelImportManager: React.FC<ExcelImportManagerProps> = ({ onPushLog, onRe
                                 </label>
                                 <div className="flex gap-3">
                                     <select value={selectedCompany} onChange={(e) => setSelectedCompany(e.target.value)} className="flex-1 px-5 py-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-slate-900 dark:text-white text-sm font-bold focus:ring-2 focus:ring-indigo-500 transition-all outline-none">
-                                        <option value="">-- Active Company --</option>
-                                        {companies.map(c => (<option key={c} value={c}>{c}</option>))}
+                                        {companies.length === 0 ? (
+                                            <option value="">No companies found - Is Tally running?</option>
+                                        ) : (
+                                            <>
+                                                <option value="">-- Select Company --</option>
+                                                {companies.map(c => (<option key={c} value={c}>{c}</option>))}
+                                            </>
+                                        )}
                                     </select>
-                                    <button onClick={loadCompanies} disabled={loadingCompanies} className="p-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-400 transition-all active:scale-95 shadow-sm">
+                                    <button onClick={loadCompanies} disabled={loadingCompanies} className="p-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-400 transition-all active:scale-95 shadow-sm" title="Refresh companies from Tally">
                                         <RefreshCw className={`w-5 h-5 ${loadingCompanies ? 'animate-spin' : ''}`} />
                                     </button>
                                 </div>
+                                {companies.length === 0 && (
+                                    <p className="text-xs text-red-500 mt-2">⚠️ Cannot connect to Tally. Make sure Tally Prime is running on localhost:9000</p>
+                                )}
                             </div>
                         </div>
                     )}

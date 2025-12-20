@@ -8,3 +8,4 @@ pillow
 pytesseract
 pdfplumber
 opencv-python
+pdf2image

@@ -3,7 +3,7 @@ import { InvoiceData } from './types';
 /**
  * ARCHITECTURE:
  * 
- * Backend API (https://autotally-backend.onrender.com)
+ * Backend API (https://desktopserver.onrender.com)
  *   - Holds API keys
  *   - AI document processing
  *   - Invoice storage/history

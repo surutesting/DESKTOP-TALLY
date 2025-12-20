@@ -3,29 +3,23 @@ import { InvoiceData, TallyResponse, BankStatementData, ExcelVoucher } from '../
 import { TALLY_API_URL } from '../constants';
 import { v4 as uuidv4 } from 'uuid';
 
-// --- PERFORMANCE OPTIMIZED HELPERS ---
+// --- HELPER FUNCTIONS ---
 
 const esc = (str: string) => {
   if (!str) return '';
-  // Faster string replacement for high-volume XML
-  return str.replace(/[&<>"']/g, (m) => {
-    switch (m) {
-      case '&': return '&amp;';
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      case '"': return '&quot;';
-      case "'": return '&apos;';
-      default: return m;
-    }
-  });
+  return str.replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, ' ');
 };
 
 export const cleanName = (str: string): string => {
   if (!str) return 'Unknown Item';
   return str.replace(/[^a-zA-Z0-9\s\-\.\(\)%]/g, '')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .substring(0, 80); // Increased limit for complex ledger names
+    .replace(/\s+/g, ' ')
+    .trim()
+    .substring(0, 50);
 };
 
 const round = (num: number): number => {
@@ -36,13 +30,23 @@ const formatRate = (num: number): string => {
   return Number.isInteger(num) ? num.toString() : num.toFixed(1).replace(/\.0$/, '');
 };
 
+// STRICT TALLY FORMAT: YYYYMMDD
 const formatDateForXml = (dateStr: string) => {
-  if (!dateStr) return new Date().toISOString().slice(0, 10).replace(/-/g, ''); 
+  if (!dateStr) {
+    const today = new Date();
+    return today.toISOString().slice(0, 10).replace(/-/g, '');
+  }
   const d = dateStr.replace(/[\.\/\s]/g, '-');
+
+  // Input: YYYY-MM-DD -> Output: YYYYMMDD
   if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d.replace(/-/g, '');
+
+  // Input: DD-MM-YYYY -> Output: YYYYMMDD
   const match = d.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
   if (match) return `${match[3]}${match[2].padStart(2, '0')}${match[1].padStart(2, '0')}`;
-  return new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+  const today = new Date();
+  return today.toISOString().slice(0, 10).replace(/-/g, '');
 };
 
 const STATE_MAP: Record<string, string> = {
@@ -59,424 +63,709 @@ const STATE_MAP: Record<string, string> = {
 };
 
 const getStateName = (gstin: string): string => {
-    if(!gstin || gstin.length < 2) return '';
-    const code = gstin.substring(0, 2);
-    return STATE_MAP[code] || '';
+  if (!gstin || gstin.length < 2) return '';
+  const code = gstin.substring(0, 2);
+  return STATE_MAP[code] || '';
 };
 
+// Decode HTML entities from Tally response
 const decodeHtml = (html: string) => {
-    const txt = document.createElement("textarea");
-    txt.innerHTML = html;
-    return txt.value;
+  const txt = document.createElement("textarea");
+  txt.innerHTML = html;
+  return txt.value;
 };
 
-// --- BATCH PROCESSING LOGIC ---
-
+// --- ANALYSIS HELPER ---
 export const analyzeLedgerRequirements = (vouchers: ExcelVoucher[], existingLedgers: Set<string>): string[] => {
-    const required = new Set<string>();
-    const missing: string[] = [];
+  const required = new Set<string>();
+  const missing: string[] = [];
 
-    // Optimized single-pass set creation
-    for (let i = 0; i < vouchers.length; i++) {
-        const v = vouchers[i];
-        const party = cleanName(v.partyName);
-        if (party) required.add(party);
+  vouchers.forEach(voucher => {
+    // 1. Party Ledger
+    const partyName = cleanName(voucher.partyName);
+    if (partyName) required.add(partyName);
 
-        const isSales = v.voucherType === 'Sales';
-        const sourceState = '27'; // Assume MS for now
-        const destState = (v.gstin || '').substring(0, 2);
-        const isInterState = destState && destState !== sourceState;
+    const isSales = voucher.voucherType === 'Sales';
 
-        for (const item of v.items) {
-            const taxLedger = item.ledgerName || `${isSales ? 'Sale' : 'Purchase'} ${item.taxRate}%`;
-            required.add(taxLedger);
-            if (item.taxRate > 0) {
-                if (isInterState) {
-                    required.add(`${isSales ? 'Output' : 'Input'} IGST ${item.taxRate}%`);
-                } else {
-                    const half = item.taxRate / 2;
-                    required.add(`${isSales ? 'Output' : 'Input'} CGST ${formatRate(half)}%`);
-                    required.add(`${isSales ? 'Output' : 'Input'} SGST ${formatRate(half)}%`);
-                }
-            }
+    // Check State for Tax Logic
+    const gstin = voucher.gstin ? voucher.gstin.trim().toUpperCase() : '';
+    const sourceStateCode = '27'; // Default Home State
+    const destStateCode = gstin.substring(0, 2);
+    // Determine Inter-state
+    const isInterState = (gstin.length >= 2 && destStateCode !== sourceStateCode);
+
+    voucher.items.forEach(item => {
+      // 2. Purchase/Sales Ledger
+      const ledgerName = item.ledgerName || `${isSales ? 'Sale' : 'Purchase'} ${item.taxRate}%`;
+      required.add(ledgerName);
+
+      // 3. Tax Ledgers
+      if (item.taxRate > 0) {
+        if (isInterState) {
+          const igstName = `${isSales ? 'Output' : 'Input'} IGST ${item.taxRate}%`;
+          required.add(igstName);
+        } else {
+          const half = item.taxRate / 2;
+          const cgstName = `${isSales ? 'Output' : 'Input'} CGST ${formatRate(half)}%`;
+          const sgstName = `${isSales ? 'Output' : 'Input'} SGST ${formatRate(half)}%`;
+          required.add(cgstName);
+          required.add(sgstName);
         }
-    }
-
-    required.forEach(req => {
-        if (!existingLedgers.has(req)) missing.push(req);
+      }
     });
+  });
 
-    return missing.sort();
+  required.forEach(req => {
+    if (!existingLedgers.has(req)) {
+      missing.push(req);
+    }
+  });
+
+  return missing.sort();
 };
 
-export const generateBulkExcelXml = (vouchers: ExcelVoucher[], createdMasters: Set<string>, targetCompany: string): string => {
-    const svCompany = targetCompany ? esc(targetCompany) : '##SVCurrentCompany';
-    let mastersXml = '';
-    let vouchersXml = '';
+// --- CONNECTION CHECK ---
+export const checkTallyConnection = async (): Promise<{ online: boolean; info: string; mode: 'full' | 'blind' | 'none'; activeCompany?: string }> => {
+  try {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 5000);
 
-    // Batch 1: Master Generation
-    for (const v of vouchers) {
-        const partyName = cleanName(v.partyName);
-        if (!createdMasters.has(partyName)) {
-            const group = v.voucherType === 'Sales' ? 'Sundry Debtors' : 'Sundry Creditors';
-            const state = getStateName(v.gstin);
-            mastersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${esc(partyName)}" ACTION="Create"><NAME.LIST><NAME>${esc(partyName)}</NAME></NAME.LIST><PARENT>${group}</PARENT><ISBILLWISEON>Yes</ISBILLWISEON><ISGSTAPPLICABLE>Yes</ISGSTAPPLICABLE>${v.gstin ? `<PARTYGSTIN>${esc(v.gstin)}</PARTYGSTIN>` : ''}${state ? `<STATENAME>${esc(state)}</STATENAME>` : ''}</LEDGER></TALLYMESSAGE>`;
-            createdMasters.add(partyName);
-        }
-        for (const item of v.items) {
-            const taxRate = item.taxRate || 0;
-            const ledgerName = item.ledgerName || `${v.voucherType === 'Sales' ? 'Sale' : 'Purchase'} ${taxRate}%`;
-            if (!createdMasters.has(ledgerName)) {
-                mastersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${esc(ledgerName)}" ACTION="Create"><NAME.LIST><NAME>${esc(ledgerName)}</NAME></NAME.LIST><PARENT>${v.voucherType === 'Sales' ? 'Sales Accounts' : 'Purchase Accounts'}</PARENT><ISGSTAPPLICABLE>Yes</ISGSTAPPLICABLE></LEDGER></TALLYMESSAGE>`;
-                createdMasters.add(ledgerName);
-            }
-            if (taxRate > 0) {
-                const igst = `${v.voucherType === 'Sales' ? 'Output' : 'Input'} IGST ${taxRate}%`;
-                if (!createdMasters.has(igst)) {
-                    mastersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${esc(igst)}" ACTION="Create"><NAME.LIST><NAME>${esc(igst)}</NAME></NAME.LIST><PARENT>Duties &amp; Taxes</PARENT><TAXTYPE>GST</TAXTYPE><GSTDUTYHEAD>Integrated Tax</GSTDUTYHEAD></LEDGER></TALLYMESSAGE>`;
-                    createdMasters.add(igst);
-                }
-            }
-        }
+    const response = await fetch(`${TALLY_API_URL}/health`, {
+      method: 'GET',
+      signal: controller.signal
+    });
+    clearTimeout(id);
+
+    if (response.ok) {
+      return { online: true, info: "Proxy Connected", mode: 'full' };
     }
 
-    // Batch 2: Voucher Generation
-    for (const v of vouchers) {
-        const dateXml = formatDateForXml(v.date);
-        const partyName = cleanName(v.partyName);
-        const isSales = v.voucherType === 'Sales';
-        const partyDeemedPos = isSales ? 'Yes' : 'No'; 
-        const otherDeemedPos = isSales ? 'No' : 'Yes';
+    return { online: true, info: "Port Open", mode: 'full' };
 
-        let entriesXml = '';
-        let runningTotal = 0;
-
-        for (const item of v.items) {
-            const taxable = round(item.amount);
-            const ledgerName = item.ledgerName || `${v.voucherType === 'Sales' ? 'Sale' : 'Purchase'} ${item.taxRate}%`;
-            const taxAmt = round(taxable * (item.taxRate / 100));
-            
-            runningTotal += (taxable + taxAmt);
-            
-            // Taxable Entry
-            entriesXml += `<LEDGERENTRIES.LIST><LEDGERNAME>${esc(ledgerName)}</LEDGERNAME><ISDEEMEDPOSITIVE>${otherDeemedPos}</ISDEEMEDPOSITIVE><AMOUNT>${(taxable * (isSales ? 1 : -1)).toFixed(2)}</AMOUNT></LEDGERENTRIES.LIST>`;
-            
-            // Tax Entry (simplified for bulk performance)
-            if (taxAmt > 0) {
-                const taxLedger = `${v.voucherType === 'Sales' ? 'Output' : 'Input'} IGST ${item.taxRate}%`;
-                entriesXml += `<LEDGERENTRIES.LIST><LEDGERNAME>${esc(taxLedger)}</LEDGERNAME><ISDEEMEDPOSITIVE>${otherDeemedPos}</ISDEEMEDPOSITIVE><AMOUNT>${(taxAmt * (isSales ? 1 : -1)).toFixed(2)}</AMOUNT></LEDGERENTRIES.LIST>`;
-            }
-        }
-
-        const partyAmt = (runningTotal * (isSales ? -1 : 1)).toFixed(2);
-        vouchersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><VOUCHER VCHTYPE="${v.voucherType}" ACTION="Create"><DATE>${dateXml}</DATE><VOUCHERTYPENAME>${v.voucherType}</VOUCHERTYPENAME><VOUCHERNUMBER>${esc(v.invoiceNo)}</VOUCHERNUMBER><PARTYLEDGERNAME>${esc(partyName)}</PARTYLEDGERNAME><LEDGERENTRIES.LIST><LEDGERNAME>${esc(partyName)}</LEDGERNAME><ISDEEMEDPOSITIVE>${partyDeemedPos}</ISDEEMEDPOSITIVE><ISPARTYLEDGER>Yes</ISPARTYLEDGER><AMOUNT>${partyAmt}</AMOUNT><BILLALLOCATIONS.LIST><NAME>${esc(v.invoiceNo)}</NAME><BILLTYPE>New Ref</BILLTYPE><AMOUNT>${partyAmt}</AMOUNT></BILLALLOCATIONS.LIST></LEDGERENTRIES.LIST>${entriesXml}</VOUCHER></TALLYMESSAGE>`;
-    }
-
-    return `<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>${svCompany}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC><REQUESTDATA>${mastersXml}</REQUESTDATA></IMPORTDATA><IMPORTDATA><REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>${svCompany}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC><REQUESTDATA>${vouchersXml}</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>`;
+  } catch (e) {
+    let msg = "Unreachable";
+    if (e instanceof Error) msg = e.message;
+    return { online: false, info: `Offline: ${msg}`, mode: 'none' };
+  }
 };
 
-export const generateTallyXml = (data: InvoiceData, existingLedgers: Set<string> = new Set()): string => {
-  const isSales = data.voucherType === 'Sales';
-  const dateXml = formatDateForXml(data.invoiceDate); 
-  const svCompany = data.targetCompany && data.targetCompany.trim() ? esc(data.targetCompany) : '##SVCurrentCompany';
-  
-  const rawPartyName = (isSales ? data.buyerName : data.supplierName) || "Cash Party";
-  const partyName = cleanName(rawPartyName);
-  const partyGroup = isSales ? 'Sundry Debtors' : 'Sundry Creditors';
-  const ledgerParentGroup = isSales ? 'Sales Accounts' : 'Purchase Accounts';
-  
-  const supplierGstin = (data.supplierGstin || '').trim().toUpperCase();
-  const buyerGstin = (data.buyerGstin || '').trim().toUpperCase();
-  const partyGstin = isSales ? buyerGstin : supplierGstin;
-  const partyState = getStateName(partyGstin);
-  const isInterState = (supplierGstin.substring(0, 2) !== buyerGstin.substring(0, 2)) && (supplierGstin.length === 15 && buyerGstin.length === 15);
-  
+// --- BANK XML GENERATION ---
+export const generateBankStatementXml = (data: BankStatementData, existingLedgers: Set<string> = new Set()): string => {
+  const svCompany = '##SVCurrentCompany';
+  const bankLedger = esc(data.bankName);
+
   let mastersXml = '';
-  if (!existingLedgers.has(partyName)) {
+
+  if (!existingLedgers.has(data.bankName)) {
     mastersXml += `
     <TALLYMESSAGE xmlns:UDF="TallyUDF">
-      <LEDGER NAME="${esc(partyName)}" ACTION="Create">
-        <NAME.LIST><NAME>${esc(partyName)}</NAME></NAME.LIST>
-        <PARENT>${partyGroup}</PARENT>
-        <ISBILLWISEON>Yes</ISBILLWISEON>
-        <ISGSTAPPLICABLE>Yes</ISGSTAPPLICABLE>
-        ${partyGstin ? `<PARTYGSTIN>${esc(partyGstin)}</PARTYGSTIN>` : ''}
-        <STATENAME>${esc(partyState)}</STATENAME>
+      <LEDGER NAME="${bankLedger}" ACTION="Create">
+        <NAME.LIST><NAME>${bankLedger}</NAME></NAME.LIST>
+        <PARENT>Bank Accounts</PARENT>
+        <ISBILLWISEON>No</ISBILLWISEON>
+        <ISGSTAPPLICABLE>No</ISGSTAPPLICABLE>
       </LEDGER>
     </TALLYMESSAGE>`;
   }
 
-  const uniqueRates = new Set<number>();
-  data.lineItems.forEach(item => uniqueRates.add(Number(item.gstRate) || 0));
+  const uniqueContras = new Set<string>();
+  data.transactions.forEach(t => {
+    if (t.contraLedger) uniqueContras.add(t.contraLedger);
+  });
 
-  uniqueRates.forEach(rate => {
-    const rateStr = formatRate(rate);
-    const ledgerName = `${isSales ? 'SALE' : 'PURCHASE'} @${rateStr}%`;
-    if (!existingLedgers.has(ledgerName)) {
-        mastersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${esc(ledgerName)}" ACTION="Create"><NAME.LIST><NAME>${esc(ledgerName)}</NAME></NAME.LIST><PARENT>${ledgerParentGroup}</PARENT><ISGSTAPPLICABLE>Yes</ISGSTAPPLICABLE></LEDGER></TALLYMESSAGE>`;
-    }
-    if (rate > 0) {
-        const taxParent = "Duties & Taxes";
-        if (isInterState) {
-            const igstName = `${isSales ? 'Output' : 'Input'} IGST ${rateStr}%`;
-            if (!existingLedgers.has(igstName)) {
-                mastersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${esc(igstName)}" ACTION="Create"><NAME.LIST><NAME>${esc(igstName)}</NAME></NAME.LIST><PARENT>${taxParent}</PARENT><TAXTYPE>GST</TAXTYPE><GSTDUTYHEAD>Integrated Tax</GSTDUTYHEAD><GSTRATE>${rate}</GSTRATE></LEDGER></TALLYMESSAGE>`;
-            }
-        } else {
-            const half = rate / 2;
-            const halfStr = formatRate(half);
-            const cgstName = `${isSales ? 'Output' : 'Input'} CGST@${halfStr}%`;
-            const sgstName = `${isSales ? 'Output' : 'Input'} SGST@${halfStr}%`;
-            if (!existingLedgers.has(cgstName)) mastersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${esc(cgstName)}" ACTION="Create"><NAME.LIST><NAME>${esc(cgstName)}</NAME></NAME.LIST><PARENT>${taxParent}</PARENT><TAXTYPE>GST</TAXTYPE><GSTDUTYHEAD>Central Tax</GSTDUTYHEAD><GSTRATE>${half}</GSTRATE></LEDGER></TALLYMESSAGE>`;
-            if (!existingLedgers.has(sgstName)) mastersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${esc(sgstName)}" ACTION="Create"><NAME.LIST><NAME>${esc(sgstName)}</NAME></NAME.LIST><PARENT>${taxParent}</PARENT><TAXTYPE>GST</TAXTYPE><GSTDUTYHEAD>State Tax</GSTDUTYHEAD><GSTRATE>${half}</GSTRATE></LEDGER></TALLYMESSAGE>`;
-        }
+  uniqueContras.forEach(ledgerName => {
+    if (ledgerName !== data.bankName && !existingLedgers.has(ledgerName)) {
+      mastersXml += `
+    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+      <LEDGER NAME="${esc(ledgerName)}" ACTION="Create">
+        <NAME.LIST><NAME>${esc(ledgerName)}</NAME></NAME.LIST>
+        <PARENT>Suspense A/c</PARENT>
+        <ISGSTAPPLICABLE>No</ISGSTAPPLICABLE>
+      </LEDGER>
+    </TALLYMESSAGE>`;
     }
   });
 
-  const ledgerTotals: Record<string, number> = {};
-  let totalVoucherAmount = 0;
+  let vouchersXml = '';
 
-  data.lineItems.forEach(item => {
-      const taxable = round(item.amount);
-      const rate = Number(item.gstRate) || 0;
-      const rateStr = formatRate(rate);
-      const ledgerName = `${isSales ? 'SALE' : 'PURCHASE'} @${rateStr}%`;
-      
-      ledgerTotals[ledgerName] = (ledgerTotals[ledgerName] || 0) + taxable;
-      totalVoucherAmount += taxable;
+  data.transactions.forEach((txn) => {
+    const dateXml = formatDateForXml(txn.date);
+    const amount = txn.voucherType === 'Payment' ? txn.withdrawal : txn.deposit;
+    const contraLedger = esc(txn.contraLedger);
+    const narration = esc(txn.description);
 
-      if (rate > 0) {
-          const totalTax = round(taxable * (rate / 100));
-          totalVoucherAmount += totalTax;
-          if (isInterState) {
-              const name = `${isSales ? 'Output' : 'Input'} IGST ${rateStr}%`;
-              ledgerTotals[name] = (ledgerTotals[name] || 0) + totalTax;
-          } else {
-              const halfTax = round(totalTax / 2);
-              const halfStr = formatRate(rate / 2);
-              const cName = `${isSales ? 'Output' : 'Input'} CGST@${halfStr}%`;
-              const sName = `${isSales ? 'Output' : 'Input'} SGST@${halfStr}%`;
-              ledgerTotals[cName] = (ledgerTotals[cName] || 0) + halfTax;
-              ledgerTotals[sName] = (ledgerTotals[sName] || 0) + round(totalTax - halfTax);
-          }
-      }
-  });
+    const isPayment = txn.voucherType === 'Payment';
 
-  const partyAmount = round(totalVoucherAmount);
-  const partyDeemedPos = isSales ? 'Yes' : 'No';
-  const partyAmountVal = (partyAmount * (isSales ? -1 : 1)).toFixed(2);
+    const bankDeemedPos = isPayment ? 'No' : 'Yes';
+    const bankAmountSign = isPayment ? 1 : -1;
+    const bankAmountVal = (amount * bankAmountSign).toFixed(2);
 
-  let ledgerEntriesXml = `
-    <LEDGERENTRIES.LIST>
-      <LEDGERNAME>${esc(partyName)}</LEDGERNAME>
-      <ISDEEMEDPOSITIVE>${partyDeemedPos}</ISDEEMEDPOSITIVE>
-      <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
-      <AMOUNT>${partyAmountVal}</AMOUNT>
-      <BILLALLOCATIONS.LIST>
-        <NAME>${esc(data.invoiceNumber)}</NAME>
-        <BILLTYPE>New Ref</BILLTYPE>
-        <AMOUNT>${partyAmountVal}</AMOUNT>
-      </BILLALLOCATIONS.LIST>
-    </LEDGERENTRIES.LIST>`;
+    const partyDeemedPos = isPayment ? 'Yes' : 'No';
+    const partyAmountSign = isPayment ? -1 : 1;
+    const partyAmountVal = (amount * partyAmountSign).toFixed(2);
 
-  const otherDeemedPos = isSales ? 'No' : 'Yes';
-  const otherSign = isSales ? 1 : -1;
+    vouchersXml += `
+    <TALLYMESSAGE xmlns:UDF="TallyUDF">
+      <VOUCHER VCHTYPE="${txn.voucherType}" ACTION="Create" OBJVIEW="Accounting Voucher View">
+        <DATE>${dateXml}</DATE>
+        <NARRATION>${narration}</NARRATION>
+        <VOUCHERTYPENAME>${txn.voucherType}</VOUCHERTYPENAME>
+        <VOUCHERNUMBER>${uuidv4().substring(0, 8)}</VOUCHERNUMBER>
+        <FBTPAYMENTTYPE>Default</FBTPAYMENTTYPE>
+        <PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>
+        
+        <ALLLEDGERENTRIES.LIST>
+          <LEDGERNAME>${bankLedger}</LEDGERNAME>
+          <ISDEEMEDPOSITIVE>${bankDeemedPos}</ISDEEMEDPOSITIVE>
+          <AMOUNT>${bankAmountVal}</AMOUNT>
+        </ALLLEDGERENTRIES.LIST>
 
-  Object.entries(ledgerTotals).forEach(([name, amt]) => {
-      const val = (amt * otherSign).toFixed(2);
-      ledgerEntriesXml += `
-    <LEDGERENTRIES.LIST>
-      <LEDGERNAME>${esc(name)}</LEDGERNAME>
-      <ISDEEMEDPOSITIVE>${otherDeemedPos}</ISDEEMEDPOSITIVE>
-      <AMOUNT>${val}</AMOUNT>
-    </LEDGERENTRIES.LIST>`;
+        <ALLLEDGERENTRIES.LIST>
+          <LEDGERNAME>${contraLedger}</LEDGERNAME>
+          <ISDEEMEDPOSITIVE>${partyDeemedPos}</ISDEEMEDPOSITIVE>
+          <AMOUNT>${partyAmountVal}</AMOUNT>
+        </ALLLEDGERENTRIES.LIST>
+
+      </VOUCHER>
+    </TALLYMESSAGE>`;
   });
 
   return `
 <ENVELOPE>
-  <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>
+  <HEADER>
+    <TALLYREQUEST>Import Data</TALLYREQUEST>
+  </HEADER>
   <BODY>
     <IMPORTDATA>
       <REQUESTDESC>
         <REPORTNAME>All Masters</REPORTNAME>
-        <STATICVARIABLES><SVCURRENTCOMPANY>${svCompany}</SVCURRENTCOMPANY></STATICVARIABLES>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>${svCompany}</SVCURRENTCOMPANY>
+        </STATICVARIABLES>
       </REQUESTDESC>
       <REQUESTDATA>${mastersXml}</REQUESTDATA>
     </IMPORTDATA>
+
     <IMPORTDATA>
       <REQUESTDESC>
         <REPORTNAME>Vouchers</REPORTNAME>
-        <STATICVARIABLES><SVCURRENTCOMPANY>${svCompany}</SVCURRENTCOMPANY></STATICVARIABLES>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>${svCompany}</SVCURRENTCOMPANY>
+        </STATICVARIABLES>
       </REQUESTDESC>
-      <REQUESTDATA>
-        <TALLYMESSAGE xmlns:UDF="TallyUDF">
-          <VOUCHER VCHTYPE="${data.voucherType}" ACTION="Create" OBJVIEW="Accounting Voucher View">
-            <DATE>${dateXml}</DATE>
-            <VOUCHERTYPENAME>${data.voucherType}</VOUCHERTYPENAME>
-            <VOUCHERNUMBER>${esc(data.invoiceNumber)}</VOUCHERNUMBER>
-            <REFERENCE>${esc(data.invoiceNumber)}</REFERENCE>
-            <PARTYLEDGERNAME>${esc(partyName)}</PARTYLEDGERNAME>
-            <STATENAME>${esc(partyState)}</STATENAME>
-            <PLACEOFSUPPLY>${esc(partyState)}</PLACEOFSUPPLY>
-            <EFFECTIVEDATE>${dateXml}</EFFECTIVEDATE>
-            <ISINVOICE>Yes</ISINVOICE>
-            <NARRATION>Auto-Imported Ref: ${esc(data.invoiceNumber)}</NARRATION>
-            ${ledgerEntriesXml}
-          </VOUCHER>
-        </TALLYMESSAGE>
-      </REQUESTDATA>
+      <REQUESTDATA>${vouchersXml}</REQUESTDATA>
     </IMPORTDATA>
   </BODY>
 </ENVELOPE>`;
 };
 
+// --- BULK EXCEL XML GENERATION ---
+export const generateBulkExcelXml = (vouchers: ExcelVoucher[], createdMasters: Set<string>, targetCompany: string): string => {
+  let mastersXml = '';
+  let vouchersXml = '';
+  const svCompany = targetCompany ? esc(targetCompany) : '##SVCurrentCompany';
+
+  // 1. Process Masters
+  vouchers.forEach(voucher => {
+    const partyName = cleanName(voucher.partyName);
+    if (!createdMasters.has(partyName)) {
+      const group = 'Sundry Creditors';
+      const state = getStateName(voucher.gstin);
+
+      mastersXml += `
+            <TALLYMESSAGE xmlns:UDF="TallyUDF">
+                <LEDGER NAME="${esc(partyName)}" ACTION="Create">
+                    <NAME.LIST><NAME>${esc(partyName)}</NAME></NAME.LIST>
+                    <PARENT>${group}</PARENT>
+                    <ISBILLWISEON>Yes</ISBILLWISEON>
+                    <ISGSTAPPLICABLE>Yes</ISGSTAPPLICABLE>
+                    ${voucher.gstin ? `<PARTYGSTIN>${esc(voucher.gstin)}</PARTYGSTIN>` : ''}
+                    ${state ? `<STATENAME>${esc(state)}</STATENAME>` : ''}
+                </LEDGER>
+            </TALLYMESSAGE>`;
+      createdMasters.add(partyName);
+    }
+
+    const gstin = voucher.gstin ? voucher.gstin.trim().toUpperCase() : '';
+    const homeState = '27';
+    const destState = gstin.substring(0, 2);
+    const isInterState = (gstin.length >= 2 && destState !== homeState);
+
+    voucher.items.forEach(item => {
+      const ledgerName = item.ledgerName || `${voucher.voucherType === 'Sales' ? 'Sale' : 'Purchase'} ${item.taxRate}%`;
+      if (!createdMasters.has(ledgerName)) {
+        mastersXml += `
+                <TALLYMESSAGE xmlns:UDF="TallyUDF">
+                    <LEDGER NAME="${esc(ledgerName)}" ACTION="Create">
+                        <NAME.LIST><NAME>${esc(ledgerName)}</NAME></NAME.LIST>
+                        <PARENT>${voucher.voucherType === 'Sales' ? 'Sales Accounts' : 'Purchase Accounts'}</PARENT>
+                        <ISGSTAPPLICABLE>Yes</ISGSTAPPLICABLE>
+                        <GSTRATE>${item.taxRate}</GSTRATE>
+                    </LEDGER>
+                </TALLYMESSAGE>`;
+        createdMasters.add(ledgerName);
+      }
+
+      if (item.taxRate > 0) {
+        if (isInterState) {
+          const taxLedgerName = `${voucher.voucherType === 'Sales' ? 'Output' : 'Input'} IGST ${item.taxRate}%`;
+          if (!createdMasters.has(taxLedgerName)) {
+            mastersXml += `
+                        <TALLYMESSAGE xmlns:UDF="TallyUDF">
+                        <LEDGER NAME="${esc(taxLedgerName)}" ACTION="Create">
+                        <NAME.LIST><NAME>${esc(taxLedgerName)}</NAME></NAME.LIST>
+                        <PARENT>Duties &amp; Taxes</PARENT>
+                        <TAXTYPE>GST</TAXTYPE>
+                        <GSTDUTYHEAD>Integrated Tax</GSTDUTYHEAD>
+                        <GSTRATE>${item.taxRate}</GSTRATE>
+                        </LEDGER>
+                        </TALLYMESSAGE>`;
+            createdMasters.add(taxLedgerName);
+          }
+        } else {
+          const half = item.taxRate / 2;
+          const cgstName = `${voucher.voucherType === 'Sales' ? 'Output' : 'Input'} CGST ${formatRate(half)}%`;
+          const sgstName = `${voucher.voucherType === 'Sales' ? 'Output' : 'Input'} SGST ${formatRate(half)}%`;
+
+          if (!createdMasters.has(cgstName)) {
+            mastersXml += `
+                        <TALLYMESSAGE xmlns:UDF="TallyUDF">
+                        <LEDGER NAME="${esc(cgstName)}" ACTION="Create">
+                        <NAME.LIST><NAME>${esc(cgstName)}</NAME></NAME.LIST>
+                        <PARENT>Duties &amp; Taxes</PARENT>
+                        <TAXTYPE>GST</TAXTYPE>
+                        <GSTDUTYHEAD>Central Tax</GSTDUTYHEAD>
+                        <GSTRATE>${half}</GSTRATE>
+                        </LEDGER>
+                        </TALLYMESSAGE>`;
+            createdMasters.add(cgstName);
+          }
+          if (!createdMasters.has(sgstName)) {
+            mastersXml += `
+                        <TALLYMESSAGE xmlns:UDF="TallyUDF">
+                        <LEDGER NAME="${esc(sgstName)}" ACTION="Create">
+                        <NAME.LIST><NAME>${esc(sgstName)}</NAME></NAME.LIST>
+                        <PARENT>Duties &amp; Taxes</PARENT>
+                        <TAXTYPE>GST</TAXTYPE>
+                        <GSTDUTYHEAD>State Tax</GSTDUTYHEAD>
+                        <GSTRATE>${half}</GSTRATE>
+                        </LEDGER>
+                        </TALLYMESSAGE>`;
+            createdMasters.add(sgstName);
+          }
+        }
+      }
+    });
+  });
+
+  // 2. Process Vouchers
+  vouchers.forEach(voucher => {
+    const dateXml = formatDateForXml(voucher.date);
+    const partyName = cleanName(voucher.partyName);
+    const isSales = voucher.voucherType === 'Sales';
+
+    const gstin = voucher.gstin ? voucher.gstin.trim().toUpperCase() : '';
+    const homeState = '27';
+    const destState = gstin.substring(0, 2);
+    const isInterState = (gstin.length >= 2 && destState !== homeState);
+
+    const partyDeemedPos = isSales ? 'Yes' : 'No';
+    const taxDeemedPos = isSales ? 'No' : 'Yes';
+
+    let allocationsXml = '';
+    let totalVoucherAmount = 0;
+
+    voucher.items.forEach(item => {
+      const taxable = round(item.amount);
+      const rate = item.taxRate;
+      const taxAmt = round(taxable * (rate / 100));
+
+      totalVoucherAmount += (taxable + taxAmt);
+
+      const ledgerName = item.ledgerName || `${isSales ? 'Sale' : 'Purchase'} ${rate}%`;
+
+      const taxableStr = isSales ? `${taxable.toFixed(2)}` : `-${taxable.toFixed(2)}`;
+      const taxStr = isSales ? `${taxAmt.toFixed(2)}` : `-${taxAmt.toFixed(2)}`;
+
+      allocationsXml += `
+            <LEDGERENTRIES.LIST>
+                <LEDGERNAME>${esc(ledgerName)}</LEDGERNAME>
+                <ISDEEMEDPOSITIVE>${taxDeemedPos}</ISDEEMEDPOSITIVE>
+                <AMOUNT>${taxableStr}</AMOUNT>
+            </LEDGERENTRIES.LIST>`;
+
+      if (rate > 0) {
+        if (isInterState) {
+          const taxLedgerName = `${isSales ? 'Output' : 'Input'} IGST ${rate}%`;
+          allocationsXml += `
+                    <LEDGERENTRIES.LIST>
+                        <LEDGERNAME>${esc(taxLedgerName)}</LEDGERNAME>
+                        <ISDEEMEDPOSITIVE>${taxDeemedPos}</ISDEEMEDPOSITIVE>
+                        <AMOUNT>${taxStr}</AMOUNT>
+                    </LEDGERENTRIES.LIST>`;
+        } else {
+          const half = rate / 2;
+          const halfTax = round(taxAmt / 2);
+          const otherHalf = round(taxAmt - halfTax);
+
+          const cgstName = `${isSales ? 'Output' : 'Input'} CGST ${formatRate(half)}%`;
+          const sgstName = `${isSales ? 'Output' : 'Input'} SGST ${formatRate(half)}%`;
+
+          const cgstStr = isSales ? `${halfTax.toFixed(2)}` : `-${halfTax.toFixed(2)}`;
+          const sgstStr = isSales ? `${otherHalf.toFixed(2)}` : `-${otherHalf.toFixed(2)}`;
+
+          allocationsXml += `
+                    <LEDGERENTRIES.LIST>
+                        <LEDGERNAME>${esc(cgstName)}</LEDGERNAME>
+                        <ISDEEMEDPOSITIVE>${taxDeemedPos}</ISDEEMEDPOSITIVE>
+                        <AMOUNT>${cgstStr}</AMOUNT>
+                    </LEDGERENTRIES.LIST>
+                    <LEDGERENTRIES.LIST>
+                        <LEDGERNAME>${esc(sgstName)}</LEDGERNAME>
+                        <ISDEEMEDPOSITIVE>${taxDeemedPos}</ISDEEMEDPOSITIVE>
+                        <AMOUNT>${sgstStr}</AMOUNT>
+                    </LEDGERENTRIES.LIST>`;
+        }
+      }
+    });
+
+    const partyTotal = round(totalVoucherAmount);
+    const partyAmountStr = isSales ? `-${partyTotal.toFixed(2)}` : `${partyTotal.toFixed(2)}`;
+
+    vouchersXml += `
+        <TALLYMESSAGE xmlns:UDF="TallyUDF">
+            <VOUCHER VCHTYPE="${voucher.voucherType}" ACTION="Create" OBJVIEW="Accounting Voucher View">
+                <DATE>${dateXml}</DATE>
+                <EFFECTIVEDATE>${dateXml}</EFFECTIVEDATE>
+                <NARRATION>${isSales ? 'GSTR1' : 'GSTR2A'}</NARRATION>
+                <VOUCHERTYPENAME>${voucher.voucherType}</VOUCHERTYPENAME>
+                <VOUCHERNUMBER>${esc(voucher.invoiceNo)}</VOUCHERNUMBER>
+                <REFERENCE>${esc(voucher.invoiceNo)}</REFERENCE>
+                <PARTYLEDGERNAME>${esc(partyName)}</PARTYLEDGERNAME>
+                <ISINVOICE>Yes</ISINVOICE>
+                <GUID>${uuidv4()}</GUID>
+                <FBTPAYMENTTYPE>Default</FBTPAYMENTTYPE>
+                <PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>
+                
+                <ALLLEDGERENTRIES.LIST>
+                    <LEDGERNAME>${esc(partyName)}</LEDGERNAME>
+                    <ISDEEMEDPOSITIVE>${partyDeemedPos}</ISDEEMEDPOSITIVE>
+                    <ISPARTYLEDGER>Yes</ISPARTYLEDGER>
+                    <AMOUNT>${partyAmountStr}</AMOUNT>
+                    <BILLALLOCATIONS.LIST>
+                        <NAME>${esc(voucher.invoiceNo)}</NAME>
+                        <BILLTYPE>New Ref</BILLTYPE>
+                        <AMOUNT>${partyAmountStr}</AMOUNT>
+                    </BILLALLOCATIONS.LIST>
+                </ALLLEDGERENTRIES.LIST>
+
+                ${allocationsXml}
+
+            </VOUCHER>
+        </TALLYMESSAGE>`;
+  });
+
+  return `
+    <ENVELOPE>
+      <HEADER>
+        <TALLYREQUEST>Import Data</TALLYREQUEST>
+      </HEADER>
+      <BODY>
+        <IMPORTDATA>
+          <REQUESTDESC>
+            <REPORTNAME>All Masters</REPORTNAME>
+            <STATICVARIABLES>
+              <SVCURRENTCOMPANY>${svCompany}</SVCURRENTCOMPANY>
+            </STATICVARIABLES>
+          </REQUESTDESC>
+          <REQUESTDATA>${mastersXml}</REQUESTDATA>
+        </IMPORTDATA>
+    
+        <IMPORTDATA>
+          <REQUESTDESC>
+            <REPORTNAME>Vouchers</REPORTNAME>
+            <STATICVARIABLES>
+              <SVCURRENTCOMPANY>${svCompany}</SVCURRENTCOMPANY>
+            </STATICVARIABLES>
+          </REQUESTDESC>
+          <REQUESTDATA>${vouchersXml}</REQUESTDATA>
+        </IMPORTDATA>
+      </BODY>
+    </ENVELOPE>`;
+};
+
+// --- INVOICE XML GENERATION ---
+export const generateTallyXml = (data: InvoiceData, existingLedgers: Set<string> = new Set()): string => {
+  const isSales = data.voucherType === 'Sales';
+  const dateXml = formatDateForXml(data.invoiceDate);
+  const guid = uuidv4();
+  const remoteId = uuidv4();
+  const vchKey = `${uuidv4()}:00000008`;
+
+  const svCompany = data.targetCompany && data.targetCompany.trim() ? esc(data.targetCompany) : '##SVCurrentCompany';
+  const rawPartyName = (isSales ? data.buyerName : data.supplierName) || "Cash Party";
+  const partyName = cleanName(rawPartyName);
+  const partyGroup = isSales ? 'Sundry Debtors' : 'Sundry Creditors';
+  const ledgerParentGroup = isSales ? 'Sales Accounts' : 'Purchase Accounts';
+  const supplierGstin = (data.supplierGstin || '').trim().toUpperCase();
+  const buyerGstin = (data.buyerGstin || '').trim().toUpperCase();
+  const partyGstin = isSales ? buyerGstin : supplierGstin;
+  const partyState = getStateName(partyGstin) || 'Maharashtra';
+  const buyerName = data.buyerName || 'Cash Buyer';
+
+  const sState = supplierGstin.substring(0, 2);
+  const bState = buyerGstin.substring(0, 2);
+  const isInterState = (sState && bState && sState !== bState);
+
+  const partyDeemedPos = isSales ? 'Yes' : 'No';
+  const itemDeemedPos = isSales ? 'No' : 'Yes';
+  const itemSign = isSales ? 1 : -1;
+  const taxLedgerTotals: Record<string, number> = {};
+  let totalVoucherValue = 0;
+
+  let mastersXml = `
+    <TALLYMESSAGE xmlns:UDF="TallyUDF"><UNIT NAME="Nos" ACTION="Create"><NAME>Nos</NAME><ISSIMPLEUNIT>Yes</ISSIMPLEUNIT></UNIT></TALLYMESSAGE>
+    <TALLYMESSAGE xmlns:UDF="TallyUDF"><GROUP NAME="${ledgerParentGroup}" ACTION="Create"><NAME.LIST><NAME>${ledgerParentGroup}</NAME></NAME.LIST><PARENT>Primary</PARENT></GROUP></TALLYMESSAGE>`;
+
+  if (!existingLedgers.has(partyName)) {
+    mastersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${esc(partyName)}" ACTION="Create"><NAME.LIST><NAME>${esc(partyName)}</NAME></NAME.LIST><PARENT>${partyGroup}</PARENT><ISBILLWISEON>Yes</ISBILLWISEON><ISGSTAPPLICABLE>Yes</ISGSTAPPLICABLE>${partyGstin ? `<PARTYGSTIN>${esc(partyGstin)}</PARTYGSTIN>` : ''}${partyState ? `<STATENAME>${esc(partyState)}</STATENAME>` : ''}</LEDGER></TALLYMESSAGE>`;
+  }
+
+  const uniqueRates = new Set<number>();
+  data.lineItems.forEach(item => {
+    const rate = Number(item.gstRate) || 0;
+    uniqueRates.add(rate);
+    const itemName = cleanName(item.description) || `Item @ ${rate}%`;
+    mastersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><STOCKITEM NAME="${esc(itemName)}" ACTION="Create"><NAME.LIST><NAME>${esc(itemName)}</NAME></NAME.LIST><PARENT>Primary</PARENT><BASEUNITS>Nos</BASEUNITS><OPENINGBALANCE>0 Nos</OPENINGBALANCE><ISGSTAPPLICABLE>Yes</ISGSTAPPLICABLE><GSTRATE>${rate}</GSTRATE></STOCKITEM></TALLYMESSAGE>`;
+  });
+
+  uniqueRates.forEach(rate => {
+    const ledgerName = `${isSales ? 'Sale' : 'Purchase'} ${formatRate(rate)}%`;
+    if (!existingLedgers.has(ledgerName)) {
+      mastersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${esc(ledgerName)}" ACTION="Create"><NAME.LIST><NAME>${esc(ledgerName)}</NAME></NAME.LIST><PARENT>${ledgerParentGroup}</PARENT><ISGSTAPPLICABLE>Yes</ISGSTAPPLICABLE><GSTRATE>${rate}</GSTRATE></LEDGER></TALLYMESSAGE>`;
+    }
+    if (isInterState) {
+      const igstName = `${isSales ? 'Output' : 'Input'} IGST ${formatRate(rate)}%`;
+      if (!existingLedgers.has(igstName)) {
+        mastersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${esc(igstName)}" ACTION="Create"><NAME.LIST><NAME>${esc(igstName)}</NAME></NAME.LIST><PARENT>Duties &amp; Taxes</PARENT><TAXTYPE>GST</TAXTYPE><GSTDUTYHEAD>Integrated Tax</GSTDUTYHEAD><GSTRATE>${rate}</GSTRATE></LEDGER></TALLYMESSAGE>`;
+      }
+    } else {
+      const half = rate / 2;
+      const cgstName = `${isSales ? 'Output' : 'Input'} CGST ${formatRate(half)}%`;
+      const sgstName = `${isSales ? 'Output' : 'Input'} SGST ${formatRate(half)}%`;
+      if (!existingLedgers.has(cgstName)) mastersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${esc(cgstName)}" ACTION="Create"><NAME.LIST><NAME>${esc(cgstName)}</NAME></NAME.LIST><PARENT>Duties &amp; Taxes</PARENT><TAXTYPE>GST</TAXTYPE><GSTDUTYHEAD>Central Tax</GSTDUTYHEAD><GSTRATE>${half}</GSTRATE></LEDGER></TALLYMESSAGE>`;
+      if (!existingLedgers.has(sgstName)) mastersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${esc(sgstName)}" ACTION="Create"><NAME.LIST><NAME>${esc(sgstName)}</NAME></NAME.LIST><PARENT>Duties &amp; Taxes</PARENT><TAXTYPE>GST</TAXTYPE><GSTDUTYHEAD>State Tax</GSTDUTYHEAD><GSTRATE>${half}</GSTRATE></LEDGER></TALLYMESSAGE>`;
+    }
+  });
+
+  let inventoryXml = '';
+  data.lineItems.forEach(item => {
+    const rate = Number(item.gstRate) || 0;
+    const qty = Number(item.quantity) || 1;
+    const itemRate = Number(item.rate) || 0;
+    const amount = round(qty * itemRate);
+    const itemName = cleanName(item.description) || `Item @ ${rate}%`;
+    const ledgerName = `${isSales ? 'Sale' : 'Purchase'} ${formatRate(rate)}%`;
+    totalVoucherValue += amount;
+    const lineTax = round(amount * (rate / 100));
+    totalVoucherValue += lineTax;
+
+    if (isInterState) {
+      const name = `${isSales ? 'Output' : 'Input'} IGST ${formatRate(rate)}%`;
+      taxLedgerTotals[name] = (taxLedgerTotals[name] || 0) + lineTax;
+    } else {
+      const half = rate / 2;
+      const cName = `${isSales ? 'Output' : 'Input'} CGST ${formatRate(half)}%`;
+      const sName = `${isSales ? 'Output' : 'Input'} SGST ${formatRate(half)}%`;
+      const halfTax = round(lineTax / 2);
+      const remainder = round(lineTax - halfTax);
+      taxLedgerTotals[cName] = (taxLedgerTotals[cName] || 0) + halfTax;
+      taxLedgerTotals[sName] = (taxLedgerTotals[sName] || 0) + remainder;
+    }
+    const amountStr = `${(amount * itemSign).toFixed(2)}`;
+    inventoryXml += `<ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>${esc(itemName)}</STOCKITEMNAME><ISDEEMEDPOSITIVE>${itemDeemedPos}</ISDEEMEDPOSITIVE><ACTUALQTY> ${qty} Nos</ACTUALQTY><BILLEDQTY> ${qty} Nos</BILLEDQTY><RATE>${itemRate.toFixed(2)}/Nos</RATE><AMOUNT>${amountStr}</AMOUNT><ACCOUNTINGALLOCATIONS.LIST><LEDGERNAME>${esc(ledgerName)}</LEDGERNAME><ISDEEMEDPOSITIVE>${itemDeemedPos}</ISDEEMEDPOSITIVE><AMOUNT>${amountStr}</AMOUNT></ACCOUNTINGALLOCATIONS.LIST></ALLINVENTORYENTRIES.LIST>`;
+  });
+
+  let taxLedgersXml = '';
+  Object.entries(taxLedgerTotals).forEach(([name, rawAmt]) => {
+    const amt = round(rawAmt);
+    if (amt > 0) {
+      const taxAmtStr = `${(amt * itemSign).toFixed(2)}`;
+      taxLedgersXml += `<LEDGERENTRIES.LIST><LEDGERNAME>${esc(name)}</LEDGERNAME><ISDEEMEDPOSITIVE>${itemDeemedPos}</ISDEEMEDPOSITIVE><AMOUNT>${taxAmtStr}</AMOUNT></LEDGERENTRIES.LIST>`;
+    }
+  });
+
+  const partySign = isSales ? -1 : 1;
+  const finalPartyTotal = round(totalVoucherValue);
+  const partyAmountStr = `${(finalPartyTotal * partySign).toFixed(2)}`;
+
+  return `<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>${svCompany}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC><REQUESTDATA>${mastersXml}</REQUESTDATA></IMPORTDATA><IMPORTDATA><REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>${svCompany}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC><REQUESTDATA><TALLYMESSAGE xmlns:UDF="TallyUDF"><VOUCHER REMOTEID="${remoteId}" VCHKEY="${vchKey}" VCHTYPE="${data.voucherType}" ACTION="Create" OBJVIEW="Invoice Voucher View"><OLDAUDITENTRYIDS.LIST TYPE="Number"><OLDAUDITENTRYIDS>-1</OLDAUDITENTRYIDS></OLDAUDITENTRYIDS.LIST><DATE>${dateXml}</DATE><EFFECTIVEDATE>${dateXml}</EFFECTIVEDATE><REFERENCEDATE>${dateXml}</REFERENCEDATE><VCHSTATUSDATE>${dateXml}</VCHSTATUSDATE><GUID>${guid}</GUID><STATENAME>${esc(partyState)}</STATENAME><COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE><PARTYGSTIN>${esc(partyGstin)}</PARTYGSTIN><PLACEOFSUPPLY>${esc(partyState)}</PLACEOFSUPPLY><VOUCHERTYPENAME>${data.voucherType}</VOUCHERTYPENAME><PARTYLEDGERNAME>${esc(partyName)}</PARTYLEDGERNAME><VOUCHERNUMBER>${esc(data.invoiceNumber)}</VOUCHERNUMBER><REFERENCE>${esc(data.invoiceNumber)}</REFERENCE><BASICBUYERNAME>${esc(buyerName)}</BASICBUYERNAME><ISINVOICE>Yes</ISINVOICE><NARRATION>Invoice No: ${esc(data.invoiceNumber)} | Date: ${esc(data.invoiceDate)} | Generated by AutoTally AI</NARRATION><LEDGERENTRIES.LIST><LEDGERNAME>${esc(partyName)}</LEDGERNAME><ISDEEMEDPOSITIVE>${partyDeemedPos}</ISDEEMEDPOSITIVE><ISPARTYLEDGER>Yes</ISPARTYLEDGER><AMOUNT>${partyAmountStr}</AMOUNT><BILLALLOCATIONS.LIST><NAME>${esc(data.invoiceNumber)}</NAME><BILLTYPE>New Ref</BILLTYPE><AMOUNT>${partyAmountStr}</AMOUNT></BILLALLOCATIONS.LIST></LEDGERENTRIES.LIST>${inventoryXml}${taxLedgersXml}</VOUCHER></TALLYMESSAGE></REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>`;
+};
+
+// --- PUSH FUNCTION ---
 export const pushToTally = async (xml: string): Promise<TallyResponse> => {
   try {
     const response = await fetch(TALLY_API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
+      headers: { 'Content-Type': 'text/plain', 'Connection': 'close' },
       body: xml
     });
     const text = await response.text();
-    if (text.includes("<ERRORS>0</ERRORS>") && (text.includes("<CREATED>1</CREATED>") || text.includes("<ALTERED>1</ALTERED>") || text.includes("<CREATED>"))) {
-      return { success: true, message: "Imported Successfully" };
+    if (text.includes("<LINEERROR>")) {
+      const match = text.match(/<LINEERROR>(.*?)<\/LINEERROR>/);
+      return { success: false, message: `Tally Error: ${match ? match[1] : "Unknown"}` };
     }
-    const match = text.match(/<LINEERROR>(.*?)<\/LINEERROR>/);
-    return { success: false, message: match ? match[1] : "Tally integration error" };
+    const errorsMatch = text.match(/<ERRORS>(\d+)<\/ERRORS>/);
+    const errors = errorsMatch ? parseInt(errorsMatch[1], 10) : 0;
+    if (errors > 0) return { success: false, message: `Tally reported ${errors} errors.` };
+    return { success: true, message: "Success" };
   } catch (error) {
-    return { success: false, message: "Connection to Tally failed. Check proxy/ngrok." };
+    let msg = "Unknown Error";
+    if (error instanceof Error) msg = error.message;
+    return { success: false, message: `Network Error: ${msg}` };
+  }
+};
+
+// --- FETCH LEDGERS ---
+export const fetchExistingLedgers = async (companyName?: string): Promise<Set<string>> => {
+  const svCompany = companyName ? esc(companyName) : '##SVCurrentCompany';
+  const xml = `<ENVELOPE><HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER><BODY><EXPORTDATA><REQUESTDESC><REPORTNAME>List of Accounts</REPORTNAME><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><ACCOUNTTYPE>Ledgers</ACCOUNTTYPE><SVCURRENTCOMPANY>${svCompany}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>`;
+  try {
+    const response = await fetch(TALLY_API_URL, { method: 'POST', headers: { 'Content-Type': 'text/xml' }, body: xml });
+    const text = await response.text();
+    const ledgers = new Set<string>();
+    const regexName = /<NAME>(.*?)<\/NAME>/gi;
+    let match;
+    while ((match = regexName.exec(text)) !== null) {
+      ledgers.add(decodeHtml(match[1]));
+    }
+    return ledgers;
+  } catch (error) {
+    console.warn("Could not fetch existing ledgers", error);
+    return new Set();
   }
 };
 
 export const fetchOpenCompanies = async (): Promise<string[]> => {
-  const xml = `<ENVELOPE><HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER><BODY><EXPORTDATA><REQUESTDESC><REPORTNAME>List of Companies</REPORTNAME><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>`;
+  // Simplified approach: Just get the current company by querying ledgers
+  // The response will contain the company name in the header
+  const xml = `<ENVELOPE><HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER><BODY><EXPORTDATA><REQUESTDESC><REPORTNAME>List of Accounts</REPORTNAME><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><ACCOUNTTYPE>Ledgers</ACCOUNTTYPE></STATICVARIABLES></REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>`;
   try {
-    const response = await fetch(TALLY_API_URL, { method: 'POST', body: xml });
+    const response = await fetch(TALLY_API_URL, { method: 'POST', headers: { 'Content-Type': 'text/xml' }, body: xml });
     const text = await response.text();
-    const names: string[] = [];
-    const regex = /<COMPANYNAME[^>]*>(.*?)<\/COMPANYNAME>/gi; 
-    let match;
-    while ((match = regex.exec(text)) !== null) { names.push(decodeHtml(match[1])); }
-    return [...new Set(names)].sort();
-  } catch (error) { return []; }
-};
 
-export const fetchExistingLedgers = async (companyName?: string): Promise<Set<string>> => {
-    const svCompany = companyName ? esc(companyName) : '##SVCurrentCompany';
-    const xml = `<ENVELOPE><HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER><BODY><EXPORTDATA><REQUESTDESC><REPORTNAME>List of Accounts</REPORTNAME><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><ACCOUNTTYPE>Ledgers</ACCOUNTTYPE><SVCURRENTCOMPANY>${svCompany}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>`;
-  try {
-      const response = await fetch(TALLY_API_URL, { method: 'POST', body: xml });
-      const text = await response.text();
-      const ledgers = new Set<string>();
-      const regexName = /<NAME>(.*?)<\/NAME>/gi;
-      let match;
-      while ((match = regexName.exec(text)) !== null) { ledgers.add(decodeHtml(match[1])); }
-      return ledgers;
-  } catch (error) { return new Set(); }
-};
+    // Try multiple patterns to extract company name
+    const patterns = [
+      /<REMOTECMPINFO\.LIST>.*?<NAME>(.*?)<\/NAME>/is,
+      /<COMPANY>(.*?)<\/COMPANY>/i,
+      /<SVCURRENTCOMPANY>(.*?)<\/SVCURRENTCOMPANY>/i,
+      /<COMPANYNAME>(.*?)<\/COMPANYNAME>/i
+    ];
 
-export const fetchCompanyDetails = async (companyName: string): Promise<{ gstin: string; state: string } | null> => {
-  const xml = `<ENVELOPE><HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER><BODY><EXPORTDATA><REQUESTDESC><REPORTNAME>ODBC Report</REPORTNAME><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></REQUESTDESC><REQUESTDATA><TALLYMESSAGE xmlns:UDF="TallyUDF"><COLLECTION NAME="CompanyDetails" TYPE="Company"><NATIVEMETHOD>Name</NATIVEMETHOD><NATIVEMETHOD>GSTIN</NATIVEMETHOD><NATIVEMETHOD>StateName</NATIVEMETHOD><FILTERS>CompanyNameFilter</FILTERS></COLLECTION><SYSTEM TYPE="Formulae" NAME="CompanyNameFilter">$Name = "${companyName}"</SYSTEM></TALLYMESSAGE></REQUESTDATA></EXPORTDATA></BODY></ENVELOPE>`;
-  try {
-    const response = await fetch(TALLY_API_URL, { method: 'POST', body: xml });
-    const text = await response.text();
-    const gstinMatch = text.match(/<GSTIN>(.*?)<\/GSTIN>/i);
-    const stateMatch = text.match(/<STATENAME>(.*?)<\/STATENAME>/i);
-    if (gstinMatch || stateMatch) return { gstin: gstinMatch ? decodeHtml(gstinMatch[1]) : '', state: stateMatch ? decodeHtml(stateMatch[1]) : '' };
-    return null;
-  } catch (e) { return null; }
-};
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match && match[1]) {
+        const companyName = decodeHtml(match[1]).trim();
+        if (companyName && companyName !== '##SVCurrentCompany') {
+          console.log('✅ Found company:', companyName);
+          return [companyName];
+        }
+      }
+    }
 
-export const checkTallyConnection = async (): Promise<{ online: boolean; msg: string; activeCompany?: string }> => {
-  try {
-     const controller = new AbortController();
-     const id = setTimeout(() => controller.abort(), 2000); 
-     const response = await fetch(`${TALLY_API_URL}/health`, { signal: controller.signal });
-     clearTimeout(id);
-     if (response.ok) return { online: true, msg: "Proxy Connected" };
-     return { online: true, msg: "Port Accessible" };
-  } catch {
-     return { online: false, msg: "Offline" };
+    // Fallback: If we got a valid response but couldn't extract name, 
+    // return a generic name so the app doesn't think Tally is offline
+    if (text.includes('<ENVELOPE>') || text.includes('<LEDGER')) {
+      console.log('⚠️ Tally connected but company name not found, using current company');
+      return ['Current Company'];
+    }
+
+    console.error('❌ No company found in Tally response');
+    return [];
+  } catch (error) {
+    console.error('❌ Error fetching companies:', error);
+    return [];
   }
 };
 
-export const generateBankStatementXml = (data: BankStatementData, existingLedgers: Set<string>, targetCompany: string): string => {
-    const svCompany = targetCompany ? esc(targetCompany) : '##SVCurrentCompany';
-    let mastersXml = '';
-    if (!existingLedgers.has(data.bankName)) {
-        mastersXml += `<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${esc(data.bankName)}" ACTION="Create"><NAME.LIST><NAME>${esc(data.bankName)}</NAME></NAME.LIST><PARENT>Bank Accounts</PARENT></LEDGER></TALLYMESSAGE>`;
+export const fetchCompanyDetails = async (companyName: string): Promise<{ gstin: string; state: string } | null> => {
+  const xml = `<ENVELOPE><HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER><BODY><EXPORTDATA><REQUESTDESC><REPORTNAME>Company</REPORTNAME><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>${esc(companyName)}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC></EXPORTDATA></BODY></ENVELOPE>`;
+  try {
+    const response = await fetch(TALLY_API_URL, { method: 'POST', headers: { 'Content-Type': 'text/xml' }, body: xml });
+    const text = await response.text();
+    const gstinMatch = text.match(/<GSTIN>(.*?)<\/GSTIN>/i) || text.match(/<PARTYGSTIN>(.*?)<\/PARTYGSTIN>/i);
+    const stateMatch = text.match(/<STATENAME>(.*?)<\/STATENAME>/i);
+    if (gstinMatch || stateMatch) {
+      return {
+        gstin: gstinMatch ? decodeHtml(gstinMatch[1]) : '',
+        state: stateMatch ? decodeHtml(stateMatch[1]) : ''
+      };
     }
-    
-    let vouchersXml = '';
-    data.transactions.forEach(txn => {
-        const dateXml = formatDateForXml(txn.date);
-        const amount = txn.withdrawal > 0 ? txn.withdrawal : txn.deposit;
-        const isPayment = txn.voucherType === 'Payment';
-        const bankDeemed = isPayment ? 'No' : 'Yes';
-        const partyDeemed = isPayment ? 'Yes' : 'No';
-        const bankAmt = (amount * (isPayment ? 1 : -1)).toFixed(2);
-        const partyAmt = (amount * (isPayment ? -1 : 1)).toFixed(2);
-
-        vouchersXml += `
-        <TALLYMESSAGE xmlns:UDF="TallyUDF">
-          <VOUCHER VCHTYPE="${txn.voucherType}" ACTION="Create">
-            <DATE>${dateXml}</DATE>
-            <NARRATION>${esc(txn.description)}</NARRATION>
-            <ALLLEDGERENTRIES.LIST>
-                <LEDGERNAME>${esc(data.bankName)}</LEDGERNAME>
-                <ISDEEMEDPOSITIVE>${bankDeemed}</ISDEEMEDPOSITIVE>
-                <AMOUNT>${bankAmt}</AMOUNT>
-            </ALLLEDGERENTRIES.LIST>
-            <ALLLEDGERENTRIES.LIST>
-                <LEDGERNAME>${esc(txn.contraLedger)}</LEDGERNAME>
-                <ISDEEMEDPOSITIVE>${partyDeemed}</ISDEEMEDPOSITIVE>
-                <AMOUNT>${partyAmt}</AMOUNT>
-            </ALLLEDGERENTRIES.LIST>
-          </VOUCHER>
-        </TALLYMESSAGE>`;
-    });
-
-    return `<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>${svCompany}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC><REQUESTDATA>${mastersXml}</REQUESTDATA></IMPORTDATA><IMPORTDATA><REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>${svCompany}</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC><REQUESTDATA>${vouchersXml}</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>`;
+    return null;
+  } catch (error) {
+    console.warn("Could not fetch company details", error);
+    return null;
+  }
 };
 
-export const getLedgersFromCache = (companyName?: string): Set<string> => {
-    const saved = localStorage.getItem('autotally_masters_sync');
-    if (saved) {
-        const parsed = JSON.parse(saved);
-        if (companyName && parsed.ledgers?.[companyName]) {
-            return new Set(parsed.ledgers[companyName]);
-        }
-        const all = new Set<string>();
-        Object.values(parsed.ledgers || {}).forEach((arr: any) => arr.forEach((l: string) => all.add(l)));
-        return all;
-    }
-    return new Set();
-};
-
-export const getCompaniesFromCache = (): string[] => {
-    const saved = localStorage.getItem('autotally_masters_sync');
-    if (saved) {
-        const parsed = JSON.parse(saved);
-        return parsed.companies || [];
-    }
-    return [];
-};
-
-/**
- * Interface and function to sync masters from all open Tally companies.
- */
-export interface TallyMasterSync { 
-  companies: string[]; 
-  ledgers: Record<string, string[]>; 
-  lastSync: number; 
+// --- MASTER SYNC AND CACHING ---
+export interface TallyMasterSync {
+  companies: string[];
+  ledgers: Record<string, string[]>;
+  lastSync: number;
 }
 
 export const syncMastersFromAllCompanies = async (): Promise<TallyMasterSync> => {
-    const companies = await fetchOpenCompanies();
-    const ledgersMap: Record<string, string[]> = {};
-    for (const company of companies) {
-        const ledgersSet = await fetchExistingLedgers(company);
-        ledgersMap[company] = Array.from(ledgersSet);
+  const companies = await fetchOpenCompanies();
+  const ledgersMap: Record<string, string[]> = {};
+
+  for (const company of companies) {
+    const ledgersSet = await fetchExistingLedgers(company);
+    ledgersMap[company] = Array.from(ledgersSet);
+  }
+
+  const syncData = { companies, ledgers: ledgersMap, lastSync: Date.now() };
+
+  // Cache the sync data
+  try {
+    localStorage.setItem('autotally_masters_sync', JSON.stringify(syncData));
+  } catch (e) {
+    console.warn('Failed to cache master sync data', e);
+  }
+
+  return syncData;
+};
+
+export const getLedgersFromCache = (companyName?: string): Set<string> => {
+  try {
+    const saved = localStorage.getItem('autotally_masters_sync');
+    if (saved) {
+      const parsed: TallyMasterSync = JSON.parse(saved);
+      if (companyName && parsed.ledgers?.[companyName]) {
+        return new Set(parsed.ledgers[companyName]);
+      }
+      // Return all ledgers from all companies
+      const all = new Set<string>();
+      Object.values(parsed.ledgers || {}).forEach((arr) => {
+        arr.forEach((l) => all.add(l));
+      });
+      return all;
     }
-    return { companies, ledgers: ledgersMap, lastSync: Date.now() };
+  } catch (e) {
+    console.warn('Failed to read ledgers from cache', e);
+  }
+  return new Set();
+};
+
+export const getCompaniesFromCache = (): string[] => {
+  try {
+    const saved = localStorage.getItem('autotally_masters_sync');
+    if (saved) {
+      const parsed: TallyMasterSync = JSON.parse(saved);
+      return parsed.companies || [];
+    }
+  } catch (e) {
+    console.warn('Failed to read companies from cache', e);
+  }
+  return [];
 };

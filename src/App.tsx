@@ -37,6 +37,7 @@ const App: React.FC = () => {
 
     // Redirect Logic
     const [pendingBankStatementFile, setPendingBankStatementFile] = useState<File | null>(null);
+    const [pendingExcelFile, setPendingExcelFile] = useState<ProcessedFile | null>(null);
     const [mismatchedFileAlert, setMismatchedFileAlert] = useState<{ show: boolean, file: ProcessedFile | null }>({ show: false, file: null });
 
     // Invalid File Alert
@@ -61,7 +62,7 @@ const App: React.FC = () => {
     });
 
     // Tally Status
-    const [tallyStatus, setTallyStatus] = useState<{ online: boolean; msg: string; activeCompany?: string }>({ online: false, msg: 'Connecting...' });
+    const [tallyStatus, setTallyStatus] = useState<{ online: boolean; info: string; mode: 'full' | 'blind' | 'none'; activeCompany?: string }>({ online: false, info: 'Connecting...', mode: 'none' });
 
     // Gemini API Key
     const [geminiApiKey, setGeminiApiKey] = useState<string | null>(null);
@@ -117,11 +118,12 @@ const App: React.FC = () => {
     }, [currentView, processedFiles, currentInvoice, currentFile]);
 
     const checkStatus = async () => {
-        setTallyStatus({ online: false, msg: 'Checking...' });
+        setTallyStatus({ online: false, info: 'Checking...', mode: 'none' });
         const status = await checkTallyConnection();
         setTallyStatus({
             online: status.online,
-            msg: status.msg,
+            info: status.info,
+            mode: status.mode,
             activeCompany: status.activeCompany
         });
     };
@@ -161,6 +163,11 @@ const App: React.FC = () => {
 
     const handleUpdateFile = (id: string, updates: Partial<ProcessedFile>) => {
         setProcessedFiles(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
+
+        // Auto-navigate to Dashboard when processing completes
+        if (updates.status === 'Success' || updates.status === 'Failed') {
+            setTimeout(() => setCurrentView(AppView.DASHBOARD), 100);
+        }
     };
 
     const calculateEntryStats = (data: InvoiceData) => {
@@ -190,8 +197,11 @@ const App: React.FC = () => {
         }
     };
 
-    const processSingleFile = async (entry: ProcessedFile) => {
-        setProcessedFiles(prev => prev.map(f => f.id === entry.id ? { ...f, status: 'Processing' } : f));
+    const processSingleFile = async (entry: ProcessedFile, retryCount = 0) => {
+        if (retryCount === 0) {
+            setProcessedFiles(prev => prev.map(f => f.id === entry.id ? { ...f, status: 'Processing' } : f));
+        }
+
         const start = Date.now();
         try {
             if (!isAuthenticated) {
@@ -234,6 +244,13 @@ const App: React.FC = () => {
                 setInvalidFileAlert({ show: true, fileName: entry.fileName, reason: "File empty/corrupted." });
             }
 
+            if (retryCount < 2) {
+                // Retry Logic
+                console.log(`Retrying ${entry.fileName}... Attempt ${retryCount + 1}`);
+                setTimeout(() => processSingleFile(entry, retryCount + 1), 2000);
+                return;
+            }
+
             setProcessedFiles(prev => prev.map(f => f.id === entry.id ? { ...f, status: 'Failed', error: errorMsg, timeTaken: `${duration} min` } : f));
 
             const failLog: LogEntry = {
@@ -274,15 +291,23 @@ const App: React.FC = () => {
             setMismatchedFileAlert({ show: true, file });
             return;
         }
+
+        // Bank Statement - navigate to view/edit
         if (file.sourceType === 'BANK_STATEMENT') {
             setCurrentView(AppView.BANK_STATEMENT);
+            // Always set the file so it can be viewed, even if failed
             setPendingBankStatementFile(file.file);
             return;
         }
+
+        // Excel Import - navigate and the file will be picked up by ExcelImportManager
         if (file.sourceType === 'EXCEL_IMPORT') {
             setCurrentView(AppView.EXCEL_IMPORT);
+            setPendingExcelFile(file); // Store the clicked file
             return;
         }
+
+        // Invoice - load data into editor
         if (file.data) {
             setCurrentInvoice(file.data);
             setCurrentFile(file.file);
@@ -501,18 +526,26 @@ const App: React.FC = () => {
         }
         if (currentView === AppView.BANK_STATEMENT) return (
             <BankStatementManager
-                onPushLog={handlePushLog} externalFile={pendingBankStatementFile} onRedirectToInvoice={handleRedirectToInvoice}
+                onPushLog={handlePushLog} externalFile={pendingBankStatementFile} externalData={processedFiles.find(f => f.sourceType === 'BANK_STATEMENT' && f.bankData)?.bankData || null} onRedirectToInvoice={handleRedirectToInvoice}
                 onRegisterFile={(f) => handleRegisterFile(f, 'BANK_STATEMENT')}
                 onUpdateFile={handleUpdateFile}
             />
         );
-        if (currentView === AppView.EXCEL_IMPORT) return (
-            <ExcelImportManager
-                onPushLog={handlePushLog}
-                onRegisterFile={(f) => handleRegisterFile(f, 'EXCEL_IMPORT')}
-                onUpdateFile={handleUpdateFile}
-            />
-        );
+        if (currentView === AppView.EXCEL_IMPORT) {
+            // Use the pending Excel file or find one with data
+            const excelFile = pendingExcelFile || processedFiles.find(f => f.sourceType === 'EXCEL_IMPORT' && f.excelData);
+            return (
+                <ExcelImportManager
+                    onPushLog={handlePushLog}
+                    onRegisterFile={(f) => handleRegisterFile(f, 'EXCEL_IMPORT')}
+                    onUpdateFile={handleUpdateFile}
+                    externalFile={excelFile?.file || null}
+                    externalFileId={excelFile?.id || null}
+                    externalMappedData={excelFile?.excelData || null}
+                    externalMapping={excelFile?.excelMapping || null}
+                />
+            );
+        }
         if (currentView === AppView.CHAT) return <ChatBot />;
         if (currentView === AppView.LOGS) return <TallyLogs logs={logs} />;
         return null;
@@ -570,7 +603,7 @@ const App: React.FC = () => {
                 tallyStatus={tallyStatus} onCheckStatus={checkStatus} searchTerm={searchTerm} onSearchChange={setSearchTerm} onOpenSettings={() => setIsSettingsOpen(true)}
                 onLock={handleLock}
             />
-            <main className="flex-1 overflow-hidden relative p-4 md:p-6 lg:p-8">
+            <main className="flex-1 overflow-auto relative p-6">
                 {renderContent()}
                 {toast.show && (
                     <div className="fixed bottom-6 right-6 z-[100] animate-fade-in bg-white dark:bg-slate-800 border-l-4 border-green-500 shadow-xl rounded-lg p-4 flex items-center gap-3 pr-8 min-w-[300px]">

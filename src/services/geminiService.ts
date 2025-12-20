@@ -1,4 +1,3 @@
-
 import { InvoiceData, BankTransaction, BankStatementData } from "../types";
 import { v4 as uuidv4 } from 'uuid';
 import { BACKEND_API_URL, BACKEND_API_KEY } from '../constants';
@@ -25,7 +24,11 @@ FORMAT:
 `;
 
 // Helper function to call backend Gemini proxy
-const callGeminiProxy = async (model: string, contents: any, config?: any): Promise<any> => {
+const callGeminiProxy = async (
+  model: string,
+  contents: { parts: any[] } | Array<{ role: string; parts: Array<{ text: string }> }>, // ✅ Support both formats
+  config?: any
+): Promise<any> => {
   const response = await fetch(`${BACKEND_API_URL}/ai/gemini-proxy`, {
     method: 'POST',
     headers: {
@@ -44,18 +47,17 @@ const callGeminiProxy = async (model: string, contents: any, config?: any): Prom
     throw new Error(error.detail || 'Failed to call Gemini API');
   }
 
-  const data = await response.json();
-  return data;
+  return response.json();
 };
 
 export const parseInvoiceWithGemini = async (file: File, _geminiApiKey?: string): Promise<InvoiceData> => {
   const base64Data = await fileToBase64(file);
 
   const response = await callGeminiProxy(
-    'gemini-1.5-flash',
+    'gemini-2.5-flash',
     {
       parts: [
-        { inline_data: { mime_type: file.type, data: base64Data } },
+        { inline_data: { mime_type: file.type, data: base64Data } }, // ✅ Base64 image/PDF supported
         { text: "Parse this invoice for Tally accounting." }
       ]
     },
@@ -94,18 +96,41 @@ export const parseInvoiceWithGemini = async (file: File, _geminiApiKey?: string)
   const data = JSON.parse(response.text);
   if (data.documentType === 'INVALID') throw new Error("Document not recognized.");
 
-  // Post-process logic (totals, rounding, inter-state)
   const taxable = data.lineItems.reduce((acc: number, i: any) => acc + (i.amount || 0), 0);
-  // ... apply precision rounding ...
 
   return {
     ...data,
     lineItems: data.lineItems.map((l: any) => ({ ...l, id: uuidv4() })),
     taxableValue: taxable,
-    // defaults
     cgst: 0, sgst: 0, igst: 0, cess: 0, total: taxable,
     voucherType: 'Purchase',
     reverseCharge: false
+  };
+};
+
+
+// NEW: Process bank statement PDF page-by-page (handles large files)
+export const parseBankStatementPDF = async (file: File): Promise<BankStatementData> => {
+  const response = await fetch(`${BACKEND_API_URL}/ai/process-bank-statement-pdf`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${BACKEND_API_KEY}`,
+      'Content-Type': 'application/octet-stream'
+    },
+    body: await file.arrayBuffer()
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to process bank statement');
+  }
+
+  const data = await response.json();
+  return {
+    documentType: data.documentType,
+    bankName: data.bankName,
+    accountNumber: data.accountNumber,
+    transactions: data.transactions
   };
 };
 
@@ -113,10 +138,10 @@ export const parseBankStatementWithGemini = async (file: File, _geminiApiKey?: s
   const base64Data = await fileToBase64(file);
 
   const response = await callGeminiProxy(
-    'gemini-1.5-flash',
+    'gemini-2.5-flash',
     {
       parts: [
-        { inline_data: { mime_type: file.type, data: base64Data } },
+        { inline_data: { mime_type: file.type, data: base64Data } }, // ✅ Base64 supported
         { text: "Extract transactions from this bank statement." }
       ]
     },
@@ -144,47 +169,47 @@ export const parseBankStatementWithGemini = async (file: File, _geminiApiKey?: s
 let chatHistory: Array<{ role: string, parts: Array<{ text: string }> }> = [];
 
 export const createChatSession = (_geminiApiKey?: string) => {
-  // Reset chat history
   chatHistory = [];
 
   return {
     sendMessage: async ({ message }: { message: string }) => {
-      // Add user message to history
       chatHistory.push({
         role: 'user',
         parts: [{ text: message }]
       });
 
       const response = await callGeminiProxy(
-        'gemini-1.5-pro',
-        chatHistory,
+        'gemini-2.5-flash', // ✅ Changed from gemini-1.5-pro
+        chatHistory, // ✅ Send full history with roles
         {
-          system_instruction: 'You are AutoTally Assistant, an expert in Tally Prime, Indian GST laws, and accounting automation. You help users with ledger mapping, XML generation, and GST compliance.'
+          system_instruction:
+            'You are AutoTally Assistant, an expert in Tally Prime, Indian GST laws, and accounting automation. You help users with ledger mapping, XML generation, and GST compliance.'
         }
       );
 
-      // Add model response to history
       chatHistory.push({
         role: 'model',
         parts: [{ text: response.text }]
       });
 
-      return {
-        text: response.text
-      };
+      return { text: response.text };
     }
   };
 };
 
-// Added missing image analysis function
-export const analyzeImageWithGemini = async (file: File, prompt: string, _geminiApiKey?: string): Promise<string> => {
+// Image / PDF analysis
+export const analyzeImageWithGemini = async (
+  file: File,
+  prompt: string,
+  _geminiApiKey?: string
+): Promise<string> => {
   const base64Data = await fileToBase64(file);
 
   const response = await callGeminiProxy(
-    'gemini-1.5-flash',
+    'gemini-2.5-flash',
     {
       parts: [
-        { inline_data: { mime_type: file.type, data: base64Data } },
+        { inline_data: { mime_type: file.type, data: base64Data } }, // ✅ Base64 any format
         { text: prompt || "Analyze this document." }
       ]
     }

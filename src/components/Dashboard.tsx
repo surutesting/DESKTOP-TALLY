@@ -82,7 +82,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full gap-8 overflow-y-auto pb-6 scrollbar-hide animate-fade-in relative transition-colors">
+    <div className="flex flex-col h-full gap-8 overflow-y-auto scrollbar-hide animate-fade-in relative transition-colors">
 
       {/* Top Header */}
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6">
@@ -117,7 +117,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       {/* High-Fidelity Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-4 lg:gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-6">
         {[
           { icon: BarChart2, label: 'Invoices', val: totalFiles, color: 'text-blue-600', darkColor: 'dark:text-blue-400', bg: 'bg-blue-50', border: 'border-blue-200', darkBorder: 'dark:border-blue-900/50', sub: 'Total Uploaded' },
           { icon: CheckCircle2, label: 'Success', val: successFiles, color: 'text-emerald-600', darkColor: 'dark:text-emerald-400', bg: 'bg-emerald-50', border: 'border-emerald-200', darkBorder: 'dark:border-emerald-900/50', sub: 'Imported Clear' },
@@ -125,24 +125,24 @@ const Dashboard: React.FC<DashboardProps> = ({
           { icon: CheckSquare, label: 'Matches', val: totalCorrect, color: 'text-indigo-600', darkColor: 'dark:text-indigo-400', bg: 'bg-indigo-50', border: 'border-indigo-200', darkBorder: 'dark:border-indigo-900/50', sub: 'Correct Entries' },
           { icon: AlertTriangle, label: 'Mismatches', val: totalIncorrect, color: 'text-orange-600', darkColor: 'dark:text-orange-400', bg: 'bg-orange-50', border: 'border-orange-200', darkBorder: 'dark:border-orange-900/50', sub: 'Entry Flags' }
         ].map((card, i) => (
-          <div key={i} className={`relative group p-4 lg:p-6 rounded-[20px] lg:rounded-[28px] border-2 shadow-md transition-all hover:shadow-xl hover:-translate-y-1 overflow-hidden ${card.bg} dark:bg-slate-900 ${card.border} ${card.darkBorder}`}>
+          <div key={i} className={`relative group p-6 rounded-[28px] border-2 shadow-md transition-all hover:shadow-xl hover:-translate-y-1 overflow-hidden ${card.bg} dark:bg-slate-900 ${card.border} ${card.darkBorder}`}>
             <div className={`absolute -right-4 -bottom-4 p-4 opacity-[0.12] dark:opacity-[0.08] transition-transform duration-700 group-hover:scale-125 group-hover:rotate-12 ${card.color} ${card.darkColor}`}>
-              <card.icon className="w-20 lg:w-24 h-20 lg:h-24" />
+              <card.icon className="w-24 h-24" />
             </div>
             <div className="relative z-10 flex flex-col h-full justify-between">
-              <div className="flex items-center gap-3 lg:gap-4">
-                <div className={`w-10 lg:w-12 h-10 lg:h-12 bg-white dark:bg-slate-800 rounded-xl lg:rounded-2xl flex items-center justify-center ${card.color} ${card.darkColor} shadow-sm border border-white dark:border-slate-700`}>
-                  <card.icon className="w-5 lg:w-6 h-5 lg:h-6" />
+              <div className="flex items-center gap-4">
+                <div className={`w-12 h-12 bg-white dark:bg-slate-800 rounded-2xl flex items-center justify-center ${card.color} ${card.darkColor} shadow-sm border border-white dark:border-slate-700`}>
+                  <card.icon className="w-6 h-6" />
                 </div>
-                <span className={`text-4xl lg:text-5xl font-black tracking-tighter ${card.color} ${card.darkColor}`}>
+                <span className={`text-5xl font-black tracking-tighter ${card.color} ${card.darkColor}`}>
                   {card.val.toString().padStart(2, '0')}
                 </span>
               </div>
-              <div className="mt-6 lg:mt-8">
-                <p className="text-[11px] lg:text-[12px] font-black text-slate-900 dark:text-slate-100 uppercase tracking-[0.1em] leading-none mb-1">
+              <div className="mt-8">
+                <p className="text-[12px] font-black text-slate-900 dark:text-slate-100 uppercase tracking-[0.1em] leading-none mb-1">
                   {card.label}
                 </p>
-                <p className="text-[10px] lg:text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-tight opacity-80">
+                <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-tight opacity-80">
                   {card.sub}
                 </p>
               </div>
@@ -153,7 +153,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       {/* Table Container */}
-      <div className="bg-white dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-[32px] shadow-sm flex flex-col overflow-hidden min-h-[500px] transition-colors">
+      <div className="bg-transparent border border-slate-200 dark:border-slate-800 rounded-[32px] shadow-sm flex flex-col overflow-hidden min-h-[500px] transition-colors">
 
         {/* Table Header Section */}
         <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-slate-50/50 dark:bg-slate-950/20">
@@ -181,8 +181,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               <button
                 onClick={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
                 className={`p-3 border rounded-2xl transition-all shadow-sm active:scale-95 relative ${filterStatus !== 'All'
-                  ? 'bg-indigo-600 border-indigo-600 text-white'
-                  : 'bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    ? 'bg-indigo-600 border-indigo-600 text-white'
+                    : 'bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
               >
                 <Filter className="w-5 h-5" />
@@ -223,8 +223,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
 
         {/* Table Body */}
-        <div className="flex-1 overflow-x-auto overflow-y-auto">
-          <table className="w-full text-sm text-left border-collapse min-w-[1200px]">
+        <div className="flex-1 overflow-auto">
+          <table className="w-full text-sm text-left border-collapse">
             <thead className="text-[11px] text-slate-400 dark:text-slate-500 font-black uppercase tracking-widest bg-slate-50/50 dark:bg-slate-950/50 border-b border-slate-100 dark:border-slate-800 sticky top-0 z-10">
               <tr>
                 <th className="px-8 py-5">Origin / File</th>
@@ -261,8 +261,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                     <td className="px-8 py-6">
                       <div className="flex items-center gap-3">
                         <div className={`w-10 h-10 rounded-2xl flex items-center justify-center border transition-all group-hover:scale-105 shadow-sm ${file.sourceType === 'EXCEL_IMPORT' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-500' :
-                          file.sourceType === 'BANK_STATEMENT' ? 'bg-orange-500/10 border-orange-500/20 text-orange-600 dark:text-orange-500' :
-                            'bg-indigo-500/10 border-indigo-500/20 text-indigo-600 dark:text-indigo-500'
+                            file.sourceType === 'BANK_STATEMENT' ? 'bg-orange-500/10 border-orange-500/20 text-orange-600 dark:text-orange-500' :
+                              'bg-indigo-500/10 border-indigo-500/20 text-indigo-600 dark:text-indigo-500'
                           }`}>
                           {file.sourceType === 'EXCEL_IMPORT' ? <FileSpreadsheet className="w-5 h-5" /> :
                             file.sourceType === 'BANK_STATEMENT' ? <Landmark className="w-5 h-5" /> :
@@ -325,7 +325,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
 
         {/* Footer Stats Row */}
-        <div className="p-6 border-t border-slate-100 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-slate-50/30 dark:bg-slate-950/20">
+        <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-transparent flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="flex items-center gap-8 flex-wrap">
             <div className="flex items-center gap-2">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Aggregate Count:</p>

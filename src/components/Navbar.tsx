@@ -29,7 +29,7 @@ interface NavbarProps {
   onChangeView: (view: AppView) => void;
   darkMode: boolean;
   toggleDarkMode: () => void;
-  tallyStatus: { online: boolean; msg: string; activeCompany?: string };
+  tallyStatus: { online: boolean; info: string; mode: 'full' | 'blind' | 'none'; activeCompany?: string };
   onCheckStatus: () => void;
   searchTerm: string;
   onSearchChange: (term: string) => void;
@@ -206,8 +206,8 @@ const Navbar: React.FC<NavbarProps> = ({
             onClick={handleSyncMasters}
             disabled={isSyncing || !tallyStatus.online}
             className={`p-2 rounded-lg border transition-all ${syncSuccess
-                ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
-                : 'border-slate-700 hover:border-indigo-500/50 hover:bg-indigo-500/10 text-slate-400 hover:text-indigo-400 disabled:opacity-30 disabled:cursor-not-allowed'
+              ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+              : 'border-slate-700 hover:border-indigo-500/50 hover:bg-indigo-500/10 text-slate-400 hover:text-indigo-400 disabled:opacity-30 disabled:cursor-not-allowed'
               }`}
             title="Sync Masters"
           >

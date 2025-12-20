@@ -62,6 +62,7 @@ export interface ExcelVoucher {
 export interface BankStatementData {
   documentType?: 'INVOICE' | 'BANK_STATEMENT'; // Classification flag
   bankName: string; // My Bank Ledger Name in Tally
+  accountNumber?: string; // Last 4 digits of account number
   transactions: BankTransaction[];
 }
 
@@ -73,7 +74,8 @@ export interface ProcessedFile {
   sourceType: 'OCR_INVOICE' | 'BANK_STATEMENT' | 'EXCEL_IMPORT'; // NEW: Track source
   data?: InvoiceData;
   bankData?: BankStatementData; // NEW: Store Bank Data
-  excelSummary?: { vouchers: number }; // NEW: Store Excel Stats
+  excelData?: ExcelVoucher[]; // NEW: Store full Excel voucher data
+  excelMapping?: any; // NEW: Store Excel column mapping configuration
   error?: string;
   correctEntries: number;
   incorrectEntries: number;
