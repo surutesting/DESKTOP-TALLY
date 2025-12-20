@@ -327,7 +327,7 @@ Required fields:
 - line_items: [{{"description": "", "qty": 0, "rate": 0, "amount": 0, "gst_rate": 0}}]
 
 Invoice text:
-{clean_text}
+{final_text}
 
 Return ONLY the JSON object, no markdown formatting."""
 
@@ -413,7 +413,7 @@ async def process_bank_statement_pdf(
         
         # Configure Gemini
         genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         
         # Process each page
         all_transactions = []
